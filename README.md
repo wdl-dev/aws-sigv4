@@ -122,3 +122,10 @@ buffering when `retries: 0`; keep `retries: 0` for large streaming uploads.
 Lower-level helper that returns `{ method, url, headers, body }` without sending
 the request. Use this when another HTTP client owns transport, or when S3 object
 keys need raw string URL paths that web `Request` would normalize.
+It preserves string URL paths exactly. For S3, pass object key paths in
+percent-encoded form. For non-S3 services, pass path labels as literal values
+and avoid characters that cannot appear on the wire without percent encoding,
+such as spaces, literal `%`, or non-ASCII text. Literal `.` and `..` path
+segments are required for some S3 object keys, but non-S3 callers should
+normalize or reject dot segments before signing when the target service or
+transport applies path normalization.

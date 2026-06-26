@@ -220,7 +220,8 @@ export class SigV4Client {
     const normalizedMethod = normalizeMethod(method === undefined ? defaultMethod(body) : method);
     rejectRequestBodyForGetHead(normalizedMethod, body);
     const service = signingOptions.service ?? this.service;
-    assertRequestCanRepresentSignedUrl(url, service);
+    const requestUrl = parseRequestUrl(url);
+    assertParsedRequestCanRepresentSignedUrl(requestUrl.pathname, service);
 
     const signed = await signAwsRequestInternal({
       accessKeyId: this.accessKeyId,
@@ -237,7 +238,7 @@ export class SigV4Client {
       url,
       headers,
       body,
-    }, await this.getSecretAccessKeyHash());
+    }, await this.getSecretAccessKeyHash(), requestUrl);
 
     assertRequestCanRepresentSignedUrl(signed.url, service);
     const signedInit = requestInitForSignedRequest(requestInit, signed);
@@ -316,7 +317,8 @@ export async function signAwsRequest(options: SignAwsRequestOptions): Promise<Si
 
 async function signAwsRequestInternal(
   options: SignAwsRequestOptions,
-  secretAccessKeyHash?: string | undefined
+  secretAccessKeyHash?: string | undefined,
+  parsedRequestUrl?: ParsedRequestUrl | undefined
 ): Promise<SignedAwsRequest> {
   if (!options || typeof options !== "object") {
     throw new TypeError("signAwsRequest options are required");
@@ -333,7 +335,7 @@ async function signAwsRequestInternal(
   const cache = requireSigningCache(options.cache, "cache");
   if (options.url == null) throw new TypeError("url is a required option");
 
-  const requestUrl = parseRequestUrl(options.url);
+  const requestUrl = parsedRequestUrl ?? parseRequestUrl(options.url);
   const url = requestUrl.url;
   const method = normalizeMethod(options.method === undefined ? defaultMethod(options.body) : options.method);
   const headers = new Headers(options.headers || {});
@@ -577,7 +579,10 @@ function isAbortError(err: unknown, request: Request): boolean {
 }
 
 function assertRequestCanRepresentSignedUrl(url: string | URL, service: string): void {
-  const pathname = parseRequestUrl(url).pathname;
+  assertParsedRequestCanRepresentSignedUrl(parseRequestUrl(url).pathname, service);
+}
+
+function assertParsedRequestCanRepresentSignedUrl(pathname: string, service: string): void {
   if (hasDotPathSegment(pathname)) {
     throw new TypeError(`SigV4Client cannot represent ${service} URLs with dot segments; use signAwsRequest`);
   }
@@ -826,7 +831,20 @@ function canonicalHeaderBlock(url: URL, headers: Headers, options: CanonicalHead
 }
 
 function canonicalHeaderValue(value: string): string {
-  return value.replace(/^[\t ]+|[\t ]+$/g, "").replace(/[\t ]+/g, " ");
+  const normalized: string[] = [];
+  let pendingSpace = false;
+  for (const char of value) {
+    if (char === " " || char === "\t") {
+      if (normalized.length > 0) pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace) {
+      normalized.push(" ");
+      pendingSpace = false;
+    }
+    normalized.push(char);
+  }
+  return normalized.join("");
 }
 
 function normalizeUnsignableHeaders(value: unknown, name: string): string[] | undefined {
@@ -1023,8 +1041,7 @@ function setGeneratedContentType(body: BodyInit, headers: Headers): void {
   }
 }
 
-async function bodyBytes(body: BodyInit | null | undefined): Promise<Uint8Array> {
-  if (body == null) return new Uint8Array();
+async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
   if (typeof body === "string") return textEncoder.encode(body);
   if (body instanceof Uint8Array) return body;
   if (body instanceof ArrayBuffer) return new Uint8Array(body);

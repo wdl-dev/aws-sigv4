@@ -7,6 +7,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 1.0.0
+
+- Switched npmjs publishing to GitHub Actions OIDC trusted publishing after the
+  release candidate bootstrap.
+- Clarified `signAwsRequest()` raw path input contracts for S3 and non-S3
+  services.
+- Removed CodeQL-reported defensive and regular-expression hotspots without
+  changing signing behavior.
+- Simplified local S3-compatible integration test setup.
+
 ## 1.0.0-rc.1
 
 - Initial release of a zero-dependency AWS SigV4 signer for Node.js 24+ and

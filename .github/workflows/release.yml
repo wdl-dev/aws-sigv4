@@ -78,15 +78,10 @@ jobs:
       - name: Build package
         run: npm run build
 
-      # Bootstrap auth: the npmjs package must exist before trusted publishing
-      # can be configured. After the first RC publishes, configure npmjs trusted
-      # publishing for this repository and workflow, then switch this job to
-      # OIDC-only like @wdl-dev/cli.
       - name: Publish to npmjs
         run: npm publish --ignore-scripts --provenance --access public --tag "$NPM_DIST_TAG"
         env:
           NPM_DIST_TAG: ${{ needs.check.outputs.dist-tag }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-github:
     name: Publish to GitHub Packages

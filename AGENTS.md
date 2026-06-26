@@ -26,7 +26,6 @@ published package is intentionally small; `npm pack --dry-run` should keep the
 tarball limited to `LICENSE`, `NOTICE`, `README.md`, `package.json`, and
 `dist/`.
 
-Release tags are handled by `.github/workflows/release.yml`. The first release
-is bootstrapped as an RC (`1.0.0-rc.1`) using `NPM_TOKEN`; after the npmjs
-package exists, configure trusted publishing and switch the workflow to
-OIDC-only before tagging `1.0.0`. Do not run `npm publish` by hand.
+Release tags are handled by `.github/workflows/release.yml`. npmjs publishing
+uses trusted publishing with GitHub Actions OIDC, and GitHub Packages publishing
+uses the workflow `GITHUB_TOKEN`. Do not run `npm publish` by hand.
