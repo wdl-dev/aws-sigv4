@@ -5,6 +5,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # @wdl-dev/aws-sigv4
 
+[![CI](https://github.com/wdl-dev/aws-sigv4/actions/workflows/ci.yml/badge.svg)](https://github.com/wdl-dev/aws-sigv4/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@wdl-dev/aws-sigv4.svg)](https://www.npmjs.com/package/@wdl-dev/aws-sigv4)
+[![license](https://img.shields.io/npm/l/@wdl-dev/aws-sigv4.svg)](LICENSE)
+[![node](https://img.shields.io/node/v/@wdl-dev/aws-sigv4.svg)](package.json)
+
 Small zero-dependency AWS Signature Version 4 signer for web-standard runtimes,
 with focused coverage for JSON AWS APIs and S3-compatible object storage.
 
