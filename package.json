@@ -1,0 +1,49 @@
+{
+  "name": "@wdl-dev/aws-sigv4",
+  "version": "1.0.0-rc.1",
+  "description": "Small zero-dependency AWS SigV4 signer for web-standard runtimes and S3-compatible storage.",
+  "keywords": [
+    "aws",
+    "sigv4",
+    "signature-v4",
+    "s3",
+    "lambda"
+  ],
+  "homepage": "https://github.com/wdl-dev/aws-sigv4#readme",
+  "bugs": {
+    "url": "https://github.com/wdl-dev/aws-sigv4/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wdl-dev/aws-sigv4.git"
+  },
+  "license": "Apache-2.0",
+  "author": "Sean Consulting OÜ",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "prepack": "npm run build",
+    "test": "npm run build && node --test test/aws-sigv4.test.js",
+    "test:integration:s3": "npm run build && node --test test/s3-integration.test.js"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
