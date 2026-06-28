@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 1.1.0
+
 - Added explicit `doubleUrlEncode` support for AWS services that expect
   double-escaped canonical URI paths.
 - Preserved existing path percent-triplets verbatim during default
