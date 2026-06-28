@@ -13,6 +13,11 @@ const FIXED_AMZ_DATE = "20260616T010203Z";
 const LAMBDA_ENDPOINT = "https://lambda.ap-northeast-1.amazonaws.com";
 const EXECUTE_API_ENDPOINT = "https://abc123.execute-api.ap-northeast-1.amazonaws.com";
 const S3_ENDPOINT = "https://s3.us-east-1.amazonaws.com";
+const AWS_S3_EXAMPLE_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE";
+const AWS_S3_EXAMPLE_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+const AWS_S3_EXAMPLE_AMZ_DATE = "20130524T000000Z";
+const AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const AWS_S3_EXAMPLE_ENDPOINT = "https://examplebucket.s3.amazonaws.com";
 
 function lambdaClient(options = {}) {
   return new SigV4Client({
@@ -76,6 +81,68 @@ function s3Request(options) {
     ...options,
   });
 }
+
+function awsS3ExampleRequest(options) {
+  return signAwsRequest({
+    accessKeyId: AWS_S3_EXAMPLE_ACCESS_KEY_ID,
+    secretAccessKey: AWS_S3_EXAMPLE_SECRET_ACCESS_KEY,
+    service: "s3",
+    region: "us-east-1",
+    signingDate: AWS_S3_EXAMPLE_AMZ_DATE,
+    ...options,
+  });
+}
+
+const AWS_S3_HEADER_AUTH_FIXTURES = [
+  {
+    name: "GET object with range",
+    method: "GET",
+    url: `${AWS_S3_EXAMPLE_ENDPOINT}/test.txt`,
+    headers: {
+      range: "bytes=0-9",
+      "x-amz-content-sha256": AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH,
+    },
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41",
+    expectedContentSha256: AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH,
+  },
+  {
+    name: "PUT object with reduced redundancy storage",
+    method: "PUT",
+    url: `${AWS_S3_EXAMPLE_ENDPOINT}/test$file.text`,
+    headers: {
+      date: "Fri, 24 May 2013 00:00:00 GMT",
+      "x-amz-storage-class": "REDUCED_REDUNDANCY",
+      "x-amz-content-sha256": "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072",
+    },
+    body: new TextEncoder().encode("Welcome to Amazon S3."),
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class, Signature=98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd",
+    expectedContentSha256: "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072",
+  },
+  {
+    name: "GET bucket lifecycle",
+    method: "GET",
+    url: `${AWS_S3_EXAMPLE_ENDPOINT}/?lifecycle`,
+    headers: {
+      "x-amz-content-sha256": AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH,
+    },
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543",
+    expectedContentSha256: AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH,
+  },
+  {
+    name: "GET bucket with max-keys and prefix",
+    method: "GET",
+    url: `${AWS_S3_EXAMPLE_ENDPOINT}/?max-keys=2&prefix=J`,
+    headers: {
+      "x-amz-content-sha256": AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH,
+    },
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7",
+    expectedContentSha256: AWS_S3_EXAMPLE_EMPTY_PAYLOAD_HASH,
+  },
+];
 
 const S3_FIXTURES = [
   {
@@ -141,6 +208,21 @@ test("S3 signing supports unsigned payload golden vectors", async () => {
     assert.equal(signed.headers.get("x-amz-date"), FIXED_AMZ_DATE, fixture.name);
     assert.equal(signed.headers.get("x-amz-content-sha256"), fixture.expectedContentSha256, fixture.name);
     assert.equal(signed.headers.get("x-amz-security-token"), fixture.expectedSecurityToken ?? null, fixture.name);
+  }
+});
+
+test("AWS S3 official header auth examples match the published signatures", async () => {
+  for (const fixture of AWS_S3_HEADER_AUTH_FIXTURES) {
+    const signed = await awsS3ExampleRequest({
+      method: fixture.method,
+      url: fixture.url,
+      headers: fixture.headers,
+      body: fixture.body,
+    });
+    assert.equal(signed.url, fixture.url, fixture.name);
+    assert.equal(signed.headers.get("authorization"), fixture.expectedAuthorization, fixture.name);
+    assert.equal(signed.headers.get("x-amz-date"), AWS_S3_EXAMPLE_AMZ_DATE, fixture.name);
+    assert.equal(signed.headers.get("x-amz-content-sha256"), fixture.expectedContentSha256, fixture.name);
   }
 });
 

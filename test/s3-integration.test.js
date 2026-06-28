@@ -28,9 +28,10 @@ test(
     const runId = randomUUID();
     const bucket = existingBucket ?? `aws-sigv4-${runId}`;
     const keyPrefix = existingBucket === undefined ? "" : `runs/${runId}/`;
-    const key = `${keyPrefix}objects/hello+sigv4.txt`;
+    const keySuffix = "sigv4.txt";
+    const key = `${keyPrefix}objects/hello+${keySuffix}`;
     const objectUrl = `${endpoint}/${bucket}/${encodeS3KeyPath(key)}`;
-    const listPrefix = key.slice(0, key.lastIndexOf("sigv4.txt"));
+    const listPrefix = key.slice(0, key.length - keySuffix.length);
     const body = `hello from aws-sigv4 ${randomUUID()}`;
     const s3 = new SigV4Client({
       accessKeyId,
@@ -86,7 +87,12 @@ test(
           ),
           "list bucket"
         );
-        assert.match(await listBucket.text(), /hello\+sigv4\.txt/);
+        const listText = await listBucket.text();
+        assert.match(listText, /<ListBucketResult\b/);
+        assert.match(listText, new RegExp(`<Prefix>${escapeRegExp(listPrefix)}</Prefix>`));
+        assert.match(listText, /<KeyCount>1<\/KeyCount>/);
+        assert.equal((listText.match(/<Contents>/gu) || []).length, 1);
+        assert.match(listText, new RegExp(`<Key>${escapeRegExp(key)}</Key>`));
       } finally {
         await s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }).catch(() => {});
       }
@@ -100,6 +106,10 @@ test(
 
 function encodeS3KeyPath(key) {
   return key.split("/").map(encodeURIComponent).join("/");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function expectOk(responsePromise, operation) {
