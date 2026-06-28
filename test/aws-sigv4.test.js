@@ -67,7 +67,8 @@ const S3_FIXTURES = [
       },
       body: "hello",
     },
-    expectedAuthorization: "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-meta-color, Signature=e815879fb7e43ffa6defedacb4cbaa791e3d7d44edbff342ddc5b6b8cfbdaece",
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-meta-color, Signature=e815879fb7e43ffa6defedacb4cbaa791e3d7d44edbff342ddc5b6b8cfbdaece",
     expectedContentSha256: "UNSIGNED-PAYLOAD",
     expectedUrl: `${S3_ENDPOINT}/example-bucket/objects/a%26b.txt?partNumber=1&uploadId=upload-id`,
   },
@@ -83,7 +84,8 @@ const S3_FIXTURES = [
       },
       body: "<Delete/>",
     },
-    expectedAuthorization: "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-checksum-sha256;x-amz-content-sha256;x-amz-date, Signature=b4352c2e0906d0a76dcc8b28c839b72629870b321e80dda6fff9b4c066d52910",
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-checksum-sha256;x-amz-content-sha256;x-amz-date, Signature=b4352c2e0906d0a76dcc8b28c839b72629870b321e80dda6fff9b4c066d52910",
     expectedContentSha256: "e2000f6b1fc1db795626ddaf9c13324157e9f56cb7820b40d7c3253a08ee5b91",
     expectedUrl: `${S3_ENDPOINT}/example-bucket?delete`,
   },
@@ -94,7 +96,8 @@ const S3_FIXTURES = [
     init: {
       method: "HEAD",
     },
-    expectedAuthorization: "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=0cc131c1da50954868d149555460960971cfae3822c6b2cf6984925a04ff5d10",
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=0cc131c1da50954868d149555460960971cfae3822c6b2cf6984925a04ff5d10",
     expectedContentSha256: "UNSIGNED-PAYLOAD",
     expectedSecurityToken: SESSION_TOKEN,
     expectedUrl: `${S3_ENDPOINT}/example-bucket/objects/session.txt`,
@@ -205,10 +208,7 @@ test("canonical query preserves invalid UTF-8 percent bytes", async () => {
     method: "GET",
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms?token=%25C0`,
   });
-  assert.notEqual(
-    signedInvalidUtf8.headers.get("authorization"),
-    signedEscapedPercent.headers.get("authorization")
-  );
+  assert.notEqual(signedInvalidUtf8.headers.get("authorization"), signedEscapedPercent.headers.get("authorization"));
 });
 
 test("canonical query preserves empty keys", async () => {
@@ -223,10 +223,7 @@ test("canonical query preserves empty keys", async () => {
     ...base,
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms?a=1`,
   });
-  assert.notEqual(
-    signedEmptyKey.headers.get("authorization"),
-    signedWithoutEmptyKey.headers.get("authorization")
-  );
+  assert.notEqual(signedEmptyKey.headers.get("authorization"), signedWithoutEmptyKey.headers.get("authorization"));
 });
 
 test("canonical query ignores empty segments", async () => {
@@ -253,22 +250,10 @@ test("canonical query ignores empty segments", async () => {
     ...base,
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms?a=1`,
   });
-  assert.equal(
-    signedEmptyMiddle.headers.get("authorization"),
-    signedNoEmptyMiddle.headers.get("authorization")
-  );
-  assert.equal(
-    signedLeadingEmpty.headers.get("authorization"),
-    signedNoEmpty.headers.get("authorization")
-  );
-  assert.equal(
-    signedTrailingEmpty.headers.get("authorization"),
-    signedNoEmpty.headers.get("authorization")
-  );
-  assert.equal(
-    signedLeadingEmpty.headers.get("authorization"),
-    signedTrailingEmpty.headers.get("authorization")
-  );
+  assert.equal(signedEmptyMiddle.headers.get("authorization"), signedNoEmptyMiddle.headers.get("authorization"));
+  assert.equal(signedLeadingEmpty.headers.get("authorization"), signedNoEmpty.headers.get("authorization"));
+  assert.equal(signedTrailingEmpty.headers.get("authorization"), signedNoEmpty.headers.get("authorization"));
+  assert.equal(signedLeadingEmpty.headers.get("authorization"), signedTrailingEmpty.headers.get("authorization"));
 });
 
 test("canonical query preserves duplicate S3 keys", async () => {
@@ -294,10 +279,7 @@ test("canonical S3 paths preserve literal plus signs", async () => {
     ...base,
     url: `${S3_ENDPOINT}/example-bucket/my%2Bfolder/file.txt`,
   });
-  assert.equal(
-    signedLiteralPlus.headers.get("authorization"),
-    signedEncodedPlus.headers.get("authorization")
-  );
+  assert.equal(signedLiteralPlus.headers.get("authorization"), signedEncodedPlus.headers.get("authorization"));
 });
 
 test("canonical S3 paths preserve encoded slash bytes", async () => {
@@ -312,10 +294,7 @@ test("canonical S3 paths preserve encoded slash bytes", async () => {
     ...base,
     url: `${S3_ENDPOINT}/example-bucket/a%2Fb.txt`,
   });
-  assert.notEqual(
-    signedEncodedSlash.headers.get("authorization"),
-    signedPathSlash.headers.get("authorization")
-  );
+  assert.notEqual(signedEncodedSlash.headers.get("authorization"), signedPathSlash.headers.get("authorization"));
 });
 
 test("canonical S3 paths preserve dot segments from string URLs", async () => {
@@ -339,14 +318,8 @@ test("canonical S3 paths preserve dot segments from string URLs", async () => {
   });
   assert.equal(signedLiteralDotSegment.url, literalDotSegmentUrl);
   assert.equal(signedEncodedDotSegment.url, encodedDotSegmentUrl);
-  assert.notEqual(
-    signedLiteralDotSegment.headers.get("authorization"),
-    signedNormalized.headers.get("authorization")
-  );
-  assert.notEqual(
-    signedEncodedDotSegment.headers.get("authorization"),
-    signedNormalized.headers.get("authorization")
-  );
+  assert.notEqual(signedLiteralDotSegment.headers.get("authorization"), signedNormalized.headers.get("authorization"));
+  assert.notEqual(signedEncodedDotSegment.headers.get("authorization"), signedNormalized.headers.get("authorization"));
 });
 
 test("string URL output normalizes origin while preserving raw path and query", async () => {
@@ -358,14 +331,8 @@ test("string URL output normalizes origin while preserving raw path and query", 
     method: "GET",
     url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms?=v",
   });
-  assert.equal(
-    signedDefaultPort.url,
-    "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms?=v"
-  );
-  assert.equal(
-    signedDefaultPort.headers.get("authorization"),
-    signedWithoutDefaultPort.headers.get("authorization")
-  );
+  assert.equal(signedDefaultPort.url, "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms?=v");
+  assert.equal(signedDefaultPort.headers.get("authorization"), signedWithoutDefaultPort.headers.get("authorization"));
 });
 
 test("URL object inputs use platform-normalized path and query", async () => {
@@ -392,14 +359,8 @@ test("canonical paths preserve repeated slashes for non-S3 services", async () =
     ...base,
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
   });
-  assert.equal(
-    signedRepeatedSlash.url,
-    "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms"
-  );
-  assert.notEqual(
-    signedRepeatedSlash.headers.get("authorization"),
-    signedSingleSlash.headers.get("authorization")
-  );
+  assert.equal(signedRepeatedSlash.url, "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms");
+  assert.notEqual(signedRepeatedSlash.headers.get("authorization"), signedSingleSlash.headers.get("authorization"));
 });
 
 test("S3 signing includes content-type by default", async () => {
@@ -461,10 +422,7 @@ test("range is signed by default when present", async () => {
       range: "bytes=0-99",
     },
   });
-  assert.match(
-    signed.headers.get("authorization") || "",
-    /SignedHeaders=host;range;x-amz-content-sha256;x-amz-date/
-  );
+  assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;range;x-amz-content-sha256;x-amz-date/);
 });
 
 test("signing returns a host header for custom transports", async () => {
@@ -514,7 +472,10 @@ test("generated content-type headers are signed before Request construction", as
     signing: { signingDate: FIXED_AMZ_DATE, signAllHeaders: true },
   });
   assert.equal(params.headers.get("content-type"), "application/x-www-form-urlencoded;charset=UTF-8");
-  assert.match(params.headers.get("authorization") || "", /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/);
+  assert.match(
+    params.headers.get("authorization") || "",
+    /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
+  );
 
   const blob = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
     method: "POST",
@@ -522,7 +483,10 @@ test("generated content-type headers are signed before Request construction", as
     signing: { signingDate: FIXED_AMZ_DATE, signAllHeaders: true },
   });
   assert.equal(blob.headers.get("content-type"), "text/plain");
-  assert.match(blob.headers.get("authorization") || "", /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/);
+  assert.match(
+    blob.headers.get("authorization") || "",
+    /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
+  );
 });
 
 test("S3 unsigned FormData signs the generated boundary", async () => {
@@ -537,7 +501,10 @@ test("S3 unsigned FormData signs the generated boundary", async () => {
   const contentType = signed.headers.get("content-type") || "";
   const boundary = /boundary=(.+)$/u.exec(contentType)?.[1];
   assert.match(contentType, /^multipart\/form-data; boundary=/);
-  assert.match(signed.headers.get("authorization") || "", /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/);
+  assert.match(
+    signed.headers.get("authorization") || "",
+    /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
+  );
   assert.ok(boundary);
   assert.match(await signed.clone().text(), new RegExp(boundary));
 });
@@ -567,15 +534,16 @@ test("payload hashing reuses Uint8Array bodies without copying", async () => {
 
 test("signing rejects empty x-amz-content-sha256", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "POST",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      headers: {
-        "content-type": "application/json",
-        "x-amz-content-sha256": "",
-      },
-      body: "{}",
-    }),
+    () =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        headers: {
+          "content-type": "application/json",
+          "x-amz-content-sha256": "",
+        },
+        body: "{}",
+      }),
     /x-amz-content-sha256 must not be empty/
   );
 });
@@ -591,7 +559,10 @@ test("signed S3 payloads send x-amz-content-sha256", async () => {
     signed.headers.get("x-amz-content-sha256"),
     "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
   );
-  assert.match(signed.headers.get("authorization") || "", /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/);
+  assert.match(
+    signed.headers.get("authorization") || "",
+    /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
+  );
 });
 
 test("signingDate accepts Date objects", async () => {
@@ -628,22 +599,24 @@ test("signingDate rejects Date subclasses with invalid primitive time", async ()
     }
   }
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: new BadDate("not-a-date"),
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: new BadDate("not-a-date"),
+      }),
     /signingDate must be a valid Date/
   );
 });
 
 test("signingDate rejects Date prototype objects with a stable message", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: Object.create(Date.prototype),
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: Object.create(Date.prototype),
+      }),
     /signingDate must be a valid Date/
   );
 });
@@ -673,57 +646,58 @@ test("signingDate accepts ISO-8601 strings", async () => {
 
 test("signingDate rejects ISO-8601 strings without timezone", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: "2026-06-16T01:02:03",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: "2026-06-16T01:02:03",
+      }),
     /signingDate must be a valid Date/
   );
 });
 
 test("signingDate rejects non-ISO strings with timezone suffixes", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: "06/16/2026 01:02:03 +00:00",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: "06/16/2026 01:02:03 +00:00",
+      }),
     /signingDate must be a valid Date/
   );
 });
 
 test("signingDate rejects invalid compact AWS date strings", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: "20269999T999999Z",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: "20269999T999999Z",
+      }),
     /signingDate must be a valid Date/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: "20260229T010203Z",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: "20260229T010203Z",
+      }),
     /signingDate must be a valid Date/
   );
 });
 
 test("signingDate rejects invalid ISO calendar dates", async () => {
-  for (const signingDate of [
-    "2026-02-30T00:00:00Z",
-    "2026-04-31T00:00:00Z",
-    "2027-02-29T00:00:00Z",
-  ]) {
+  for (const signingDate of ["2026-02-30T00:00:00Z", "2026-04-31T00:00:00Z", "2027-02-29T00:00:00Z"]) {
     await assert.rejects(
-      () => lambdaRequest({
-        method: "GET",
-        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-        signingDate,
-      }),
+      () =>
+        lambdaRequest({
+          method: "GET",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          signingDate,
+        }),
       /signingDate must be a valid Date/
     );
   }
@@ -731,101 +705,108 @@ test("signingDate rejects invalid ISO calendar dates", async () => {
 
 test("signingDate rejects non-Date objects with a stable message", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: {},
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: {},
+      }),
     /signingDate must be a valid Date/
   );
 });
 
 test("signing rejects non-HTTP URLs", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: "ftp://example.com/path",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: "ftp://example.com/path",
+      }),
     /url must use http: or https:/
   );
 });
 
 test("signing rejects string URLs with unescaped whitespace", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: "https://lambda.ap-northeast-1.amazonaws.com/a b?x=y z",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: "https://lambda.ap-northeast-1.amazonaws.com/a b?x=y z",
+      }),
     /url must not contain unescaped whitespace/
   );
 });
 
 test("signing rejects string URLs without scheme slashes", async () => {
   await assert.rejects(
-    () => s3Request({
-      method: "GET",
-      url: "https:example-bucket.s3.amazonaws.com/key.txt?x=1",
-    }),
+    () =>
+      s3Request({
+        method: "GET",
+        url: "https:example-bucket.s3.amazonaws.com/key.txt?x=1",
+      }),
     /url must include scheme:\/\/host/
   );
 });
 
 test("signing rejects string URLs with backslashes", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: String.raw`${LAMBDA_ENDPOINT}/2025-09-09/a\b.txt`,
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: String.raw`${LAMBDA_ENDPOINT}/2025-09-09/a\b.txt`,
+      }),
     /url must not contain backslashes/
   );
   await assert.rejects(
-    () => s3Client().sign(String.raw`${S3_ENDPOINT}/example-bucket/a\b.txt`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      s3Client().sign(String.raw`${S3_ENDPOINT}/example-bucket/a\b.txt`, {
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /url must not contain backslashes/
   );
 });
 
 test("signing rejects string URLs with userinfo", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: "https://user:pass@lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: "https://user:pass@lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
+      }),
     /url must not include username or password/
   );
 });
 
 test("signing rejects malformed percent escapes in string URLs", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/%ZZ?token=%`,
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/%ZZ?token=%`,
+      }),
     /url must not contain malformed percent encoding/
   );
 });
 
 test("signing rejects malformed percent escapes in URL objects", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: new URL(`${LAMBDA_ENDPOINT}/2025-09-09/%ZZ?token=%`),
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: new URL(`${LAMBDA_ENDPOINT}/2025-09-09/%ZZ?token=%`),
+      }),
     /url must not contain malformed percent encoding/
   );
 });
 
 test("signing rejects invalid UTF-16 in string URLs", async () => {
-  for (const url of [
-    `${LAMBDA_ENDPOINT}/2025-09-09/\uD800`,
-    `${LAMBDA_ENDPOINT}/2025-09-09/microvms?token=\uD800`,
-  ]) {
+  for (const url of [`${LAMBDA_ENDPOINT}/2025-09-09/\uD800`, `${LAMBDA_ENDPOINT}/2025-09-09/microvms?token=\uD800`]) {
     await assert.rejects(
-      () => lambdaRequest({
-        method: "GET",
-        url,
-      }),
+      () =>
+        lambdaRequest({
+          method: "GET",
+          url,
+        }),
       /url must not contain invalid UTF-16/
     );
   }
@@ -834,10 +815,11 @@ test("signing rejects invalid UTF-16 in string URLs", async () => {
 test("signing rejects invalid HTTP methods", async () => {
   for (const method of ["", "BAD METHOD", "GET\nX-Test: y", null, 123, Symbol("GET")]) {
     await assert.rejects(
-      () => lambdaRequest({
-        method,
-        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      }),
+      () =>
+        lambdaRequest({
+          method,
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        }),
       /method must be a valid HTTP token/
     );
   }
@@ -845,82 +827,90 @@ test("signing rejects invalid HTTP methods", async () => {
 
 test("signing rejects credential components with slash separators", async () => {
   await assert.rejects(
-    () => signAwsRequest({
-      accessKeyId: "AKID/EXAMPLE",
-      secretAccessKey: SECRET_ACCESS_KEY,
-      service: "lambda",
-      region: "ap-northeast-1",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: FIXED_AMZ_DATE,
-    }),
+    () =>
+      signAwsRequest({
+        accessKeyId: "AKID/EXAMPLE",
+        secretAccessKey: SECRET_ACCESS_KEY,
+        service: "lambda",
+        region: "ap-northeast-1",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: FIXED_AMZ_DATE,
+      }),
     /accessKeyId must not contain \//
   );
   await assert.rejects(
-    () => lambdaRequest({
-      service: "bad/service",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        service: "bad/service",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /service must not contain \//
   );
   await assert.rejects(
-    () => lambdaRequest({
-      region: "bad/region",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        region: "bad/region",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /region must not contain \//
   );
 });
 
 test("signing rejects credential fields with control characters", async () => {
   await assert.rejects(
-    () => signAwsRequest({
-      accessKeyId: "AKID\nEXAMPLE",
-      secretAccessKey: SECRET_ACCESS_KEY,
-      service: "lambda",
-      region: "ap-northeast-1",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: FIXED_AMZ_DATE,
-    }),
+    () =>
+      signAwsRequest({
+        accessKeyId: "AKID\nEXAMPLE",
+        secretAccessKey: SECRET_ACCESS_KEY,
+        service: "lambda",
+        region: "ap-northeast-1",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: FIXED_AMZ_DATE,
+      }),
     /accessKeyId must not contain control characters/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      sessionToken: "token\r\nvalue",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        sessionToken: "token\r\nvalue",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /sessionToken must not contain control characters/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      service: "lambda\n",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        service: "lambda\n",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /service must not contain control characters/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      region: "ap-northeast-1\u007f",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        region: "ap-northeast-1\u007f",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /region must not contain control characters/
   );
   await assert.rejects(
-    () => signAwsRequest({
-      accessKeyId: ACCESS_KEY_ID,
-      secretAccessKey: "SECRET\nKEY",
-      service: "lambda",
-      region: "ap-northeast-1",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: FIXED_AMZ_DATE,
-    }),
+    () =>
+      signAwsRequest({
+        accessKeyId: ACCESS_KEY_ID,
+        secretAccessKey: "SECRET\nKEY",
+        service: "lambda",
+        region: "ap-northeast-1",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: FIXED_AMZ_DATE,
+      }),
     /secretAccessKey must not contain control characters/
   );
   assert.throws(
@@ -931,42 +921,46 @@ test("signing rejects credential fields with control characters", async () => {
 
 test("signing rejects credential components with whitespace", async () => {
   await assert.rejects(
-    () => signAwsRequest({
-      accessKeyId: "AKID EXAMPLE",
-      secretAccessKey: SECRET_ACCESS_KEY,
-      service: "lambda",
-      region: "ap-northeast-1",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      signingDate: FIXED_AMZ_DATE,
-    }),
+    () =>
+      signAwsRequest({
+        accessKeyId: "AKID EXAMPLE",
+        secretAccessKey: SECRET_ACCESS_KEY,
+        service: "lambda",
+        region: "ap-northeast-1",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: FIXED_AMZ_DATE,
+      }),
     /accessKeyId must not contain whitespace/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      service: "lambda test",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        service: "lambda test",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /service must not contain whitespace/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      region: "ap northeast-1",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        region: "ap northeast-1",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /region must not contain whitespace/
   );
 });
 
 test("signing rejects session tokens with surrounding whitespace", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      sessionToken: " token",
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        sessionToken: " token",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /sessionToken must not contain leading or trailing whitespace/
   );
   assert.throws(
@@ -983,15 +977,16 @@ test("signing rejects Authorization parameter separators in credential component
     ["service", "lambda;Injected"],
   ]) {
     await assert.rejects(
-      () => signAwsRequest({
-        accessKeyId: name === "accessKeyId" ? value : ACCESS_KEY_ID,
-        secretAccessKey: SECRET_ACCESS_KEY,
-        service: name === "service" ? value : "lambda",
-        region: name === "region" ? value : "ap-northeast-1",
-        method: "GET",
-        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-        signingDate: FIXED_AMZ_DATE,
-      }),
+      () =>
+        signAwsRequest({
+          accessKeyId: name === "accessKeyId" ? value : ACCESS_KEY_ID,
+          secretAccessKey: SECRET_ACCESS_KEY,
+          service: name === "service" ? value : "lambda",
+          region: name === "region" ? value : "ap-northeast-1",
+          method: "GET",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          signingDate: FIXED_AMZ_DATE,
+        }),
       new RegExp(`${name} must not contain Authorization parameter separators`)
     );
   }
@@ -999,21 +994,23 @@ test("signing rejects Authorization parameter separators in credential component
 
 test("signing rejects non-string session tokens", async () => {
   await assert.rejects(
-    () => lambdaRequest({
-      sessionToken: 123,
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    }),
+    () =>
+      lambdaRequest({
+        sessionToken: 123,
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      }),
     /sessionToken must be a non-empty string/
   );
   assert.throws(
-    () => new SigV4Client({
-      accessKeyId: ACCESS_KEY_ID,
-      secretAccessKey: SECRET_ACCESS_KEY,
-      sessionToken: 123,
-      service: "lambda",
-      region: "ap-northeast-1",
-    }),
+    () =>
+      new SigV4Client({
+        accessKeyId: ACCESS_KEY_ID,
+        secretAccessKey: SECRET_ACCESS_KEY,
+        sessionToken: 123,
+        service: "lambda",
+        region: "ap-northeast-1",
+      }),
     /sessionToken must be a non-empty string/
   );
 });
@@ -1021,20 +1018,22 @@ test("signing rejects non-string session tokens", async () => {
 test("SigV4Client rejects credential and cache overrides in init.signing", async () => {
   const client = lambdaClient();
   await assert.rejects(
-    () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: {
-        signingDate: FIXED_AMZ_DATE,
-        secretAccessKey: "SECRET2",
-      },
-    }),
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          signingDate: FIXED_AMZ_DATE,
+          secretAccessKey: "SECRET2",
+        },
+      }),
     /init\.signing\.secretAccessKey cannot override/
   );
   await assert.rejects(
-    () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: {
-        cache: new Map(),
-      },
-    }),
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          cache: new Map(),
+        },
+      }),
     /init\.signing\.cache cannot override/
   );
 });
@@ -1050,26 +1049,25 @@ test("SigV4Client rejects non-object init.signing values", async () => {
 });
 
 test("signing rejects non-boolean signing options", async () => {
-  assert.throws(
-    () => lambdaClient({ unsignedPayload: "false" }),
-    /unsignedPayload must be a boolean/
-  );
+  assert.throws(() => lambdaClient({ unsignedPayload: "false" }), /unsignedPayload must be a boolean/);
   await assert.rejects(
-    () => lambdaRequest({
-      method: "POST",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      body: "{}",
-      unsignedPayload: "false",
-    }),
+    () =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        body: "{}",
+        unsignedPayload: "false",
+      }),
     /unsignedPayload must be a boolean/
   );
   const client = lambdaClient();
   await assert.rejects(
-    () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: {
-        signAllHeaders: "false",
-      },
-    }),
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          signAllHeaders: "false",
+        },
+      }),
     /init\.signing\.signAllHeaders must be a boolean/
   );
 });
@@ -1145,11 +1143,14 @@ test("default signing excludes hop-by-hop headers", async () => {
 test("sign(Request) reads request bodies even without x-amz-content-sha256", async () => {
   const client = lambdaClient();
   const url = `${LAMBDA_ENDPOINT}/2025-09-09/microvms`;
-  const signedRequest = await client.sign(new Request(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: "{}",
-  }), { signing: { signingDate: FIXED_AMZ_DATE } });
+  const signedRequest = await client.sign(
+    new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+    { signing: { signingDate: FIXED_AMZ_DATE } }
+  );
   const signedExplicit = await lambdaRequest({
     method: "POST",
     url,
@@ -1188,11 +1189,12 @@ test("SigV4Client rejects GET and HEAD bodies", async () => {
   const client = lambdaClient();
   for (const method of ["GET", "HEAD"]) {
     await assert.rejects(
-      () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-        method,
-        body: "{}",
-        signing: { signingDate: FIXED_AMZ_DATE },
-      }),
+      () =>
+        client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          method,
+          body: "{}",
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
       /GET and HEAD requests with a body require signAwsRequest/
     );
   }
@@ -1269,44 +1271,34 @@ test("unsignableHeaders cannot exclude SigV4 core headers", async () => {
     },
     body: "hello",
     sessionToken: SESSION_TOKEN,
-    unsignableHeaders: [
-      "host",
-      "x-amz-content-sha256",
-      "x-amz-date",
-      "x-amz-security-token",
-      "x-debug-only",
-    ],
+    unsignableHeaders: ["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token", "x-debug-only"],
   });
   const authorization = signed.headers.get("authorization") || "";
-  assert.match(
-    authorization,
-    /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token/
-  );
+  assert.match(authorization, /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token/);
   assert.doesNotMatch(authorization, /x-debug-only/);
 });
 
 test("unsignableHeaders rejects string inputs", async () => {
   const message = /unsignableHeaders must be an iterable of header names/;
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      unsignableHeaders: "x-debug-only",
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        unsignableHeaders: "x-debug-only",
+      }),
     message
   );
-  assert.throws(
-    () => lambdaClient({ unsignableHeaders: "x-debug-only" }),
-    message
-  );
+  assert.throws(() => lambdaClient({ unsignableHeaders: "x-debug-only" }), message);
   const client = lambdaClient();
   await assert.rejects(
-    () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: {
-        signingDate: FIXED_AMZ_DATE,
-        unsignableHeaders: "x-debug-only",
-      },
-    }),
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          signingDate: FIXED_AMZ_DATE,
+          unsignableHeaders: "x-debug-only",
+        },
+      }),
     message
   );
 });
@@ -1314,25 +1306,24 @@ test("unsignableHeaders rejects string inputs", async () => {
 test("unsignableHeaders rejects null inputs", async () => {
   const message = /unsignableHeaders must be an iterable of header names/;
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      unsignableHeaders: null,
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        unsignableHeaders: null,
+      }),
     message
   );
-  assert.throws(
-    () => lambdaClient({ unsignableHeaders: null }),
-    message
-  );
+  assert.throws(() => lambdaClient({ unsignableHeaders: null }), message);
   const client = lambdaClient();
   await assert.rejects(
-    () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: {
-        signingDate: FIXED_AMZ_DATE,
-        unsignableHeaders: null,
-      },
-    }),
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          signingDate: FIXED_AMZ_DATE,
+          unsignableHeaders: null,
+        },
+      }),
     /init\.signing\.unsignableHeaders must be an iterable of header names/
   );
 });
@@ -1473,28 +1464,24 @@ test("external signing key cache keys do not expose the secret access key", asyn
 });
 
 test("signing rejects invalid signing key caches", async () => {
-  assert.throws(
-    () => lambdaClient({ cache: {} }),
-    /cache must be a Map-like cache/
-  );
-  assert.throws(
-    () => lambdaClient({ cache: new WeakMap() }),
+  assert.throws(() => lambdaClient({ cache: {} }), /cache must be a Map-like cache/);
+  assert.throws(() => lambdaClient({ cache: new WeakMap() }), /cache must be a Map-like cache/);
+  await assert.rejects(
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        cache: {},
+      }),
     /cache must be a Map-like cache/
   );
   await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      cache: {},
-    }),
-    /cache must be a Map-like cache/
-  );
-  await assert.rejects(
-    () => lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      cache: new WeakMap(),
-    }),
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        cache: new WeakMap(),
+      }),
     /cache must be a Map-like cache/
   );
 });
@@ -1534,14 +1521,15 @@ test("SigV4Client.sign rejects manual FormData content-type", async () => {
   form.set("message", "hello");
   for (const contentType of ["multipart/form-data", "multipart/form-data; boundary=manual"]) {
     await assert.rejects(
-      () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-        method: "POST",
-        headers: {
-          "content-type": contentType,
-        },
-        body: form,
-        signing: { signingDate: FIXED_AMZ_DATE },
-      }),
+      () =>
+        client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          method: "POST",
+          headers: {
+            "content-type": contentType,
+          },
+          body: form,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
       /FormData content-type must be generated by the runtime/
     );
   }
@@ -1552,14 +1540,15 @@ test("S3 unsigned FormData rejects manual content-type", async () => {
   const form = new FormData();
   form.set("message", "hello");
   await assert.rejects(
-    () => client.sign(`${S3_ENDPOINT}/example-bucket/form-data.txt`, {
-      method: "PUT",
-      headers: {
-        "content-type": "multipart/form-data; boundary=manual",
-      },
-      body: form,
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.sign(`${S3_ENDPOINT}/example-bucket/form-data.txt`, {
+        method: "PUT",
+        headers: {
+          "content-type": "multipart/form-data; boundary=manual",
+        },
+        body: form,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /FormData content-type must be generated by the runtime/
   );
 });
@@ -1587,7 +1576,9 @@ test("SigV4Client.sign does not fully buffer unsigned S3 Request streams", async
     pull(controller) {
       pulls += 1;
       controller.enqueue(new TextEncoder().encode(String(pulls)));
-      if (pulls === 3) controller.close();
+      if (pulls === 3) {
+        controller.close();
+      }
     },
   });
   const request = new Request(`${S3_ENDPOINT}/example-bucket/large-upload.bin`, {
@@ -1609,16 +1600,18 @@ test("SigV4Client rejects dot-segment string URLs", async () => {
   const client = s3Client();
   for (const segment of ["..", "%2e%2e", ".%2e", "%2e.", ".%2E", "%2E."]) {
     await assert.rejects(
-      () => client.sign(`${S3_ENDPOINT}/example-bucket/a/${segment}/b.txt`, {
-        signing: { signingDate: FIXED_AMZ_DATE },
-      }),
+      () =>
+        client.sign(`${S3_ENDPOINT}/example-bucket/a/${segment}/b.txt`, {
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
       /cannot represent s3 URLs with dot segments/
     );
   }
   await assert.rejects(
-    () => client.sign("https://lambda.us-east-1.amazonaws.com/a/../b", {
-      signing: { service: "lambda", region: "us-east-1", signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.sign("https://lambda.us-east-1.amazonaws.com/a/../b", {
+        signing: { service: "lambda", region: "us-east-1", signingDate: FIXED_AMZ_DATE },
+      }),
     /cannot represent lambda URLs with dot segments/
   );
 });
@@ -1629,16 +1622,19 @@ test("SigV4Client rejects dot-segment URLs before reading stream bodies", async 
     pull(controller) {
       pulls += 1;
       controller.enqueue(new TextEncoder().encode(String(pulls)));
-      if (pulls === 3) controller.close();
+      if (pulls === 3) {
+        controller.close();
+      }
     },
   });
   const client = lambdaClient();
   await assert.rejects(
-    () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/a/../microvms`, {
-      method: "POST",
-      body,
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/a/../microvms`, {
+        method: "POST",
+        body,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /cannot represent lambda URLs with dot segments/
   );
   assert.ok(pulls < 3);
@@ -1650,18 +1646,21 @@ test("SigV4Client.fetch rejects dot-segment URLs before reading stream bodies", 
     pull(controller) {
       pulls += 1;
       controller.enqueue(new TextEncoder().encode(String(pulls)));
-      if (pulls === 3) controller.close();
+      if (pulls === 3) {
+        controller.close();
+      }
     },
   });
   const client = lambdaClient({
     fetch: async () => new Response("should not fetch"),
   });
   await assert.rejects(
-    () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/a/../microvms`, {
-      method: "PUT",
-      body,
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/a/../microvms`, {
+        method: "PUT",
+        body,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /cannot represent lambda URLs with dot segments/
   );
   assert.ok(pulls < 3);
@@ -1673,7 +1672,9 @@ test("SigV4Client.fetch does not fully buffer unsigned S3 Request streams by def
     pull(controller) {
       pulls += 1;
       controller.enqueue(new TextEncoder().encode(String(pulls)));
-      if (pulls === 3) controller.close();
+      if (pulls === 3) {
+        controller.close();
+      }
     },
   });
   const request = new Request(`${S3_ENDPOINT}/example-bucket/large-upload.bin`, {
@@ -1751,10 +1752,7 @@ test("SigV4Client.fetch does not bind unrelated custom fetch functions", async (
 
 test("SigV4Client rejects non-function fetch options", () => {
   for (const fetch of [null, false, 0]) {
-    assert.throws(
-      () => lambdaClient({ fetch }),
-      /fetch must be a function/
-    );
+    assert.throws(() => lambdaClient({ fetch }), /fetch must be a function/);
   }
 });
 
@@ -1834,7 +1832,9 @@ test("SigV4Client.fetch retries transient fetch rejections", async () => {
     initialRetryDelayMs: 0,
     fetch: async () => {
       calls += 1;
-      if (calls === 1) throw new TypeError("socket reset");
+      if (calls === 1) {
+        throw new TypeError("socket reset");
+      }
       return new Response("ok");
     },
   });
@@ -1877,11 +1877,12 @@ test("SigV4Client.fetch does not retry non-idempotent fetch rejections", async (
     },
   });
   await assert.rejects(
-    () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      method: "POST",
-      body: "{}",
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        method: "POST",
+        body: "{}",
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /socket reset/
   );
   assert.equal(calls, 1);
@@ -1900,11 +1901,12 @@ test("SigV4Client.fetch does not retry aborted requests", async () => {
     },
   });
   await assert.rejects(
-    () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      method: "PUT",
-      signal: controller.signal,
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        method: "PUT",
+        signal: controller.signal,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /aborted/
   );
   assert.equal(calls, 1);
@@ -1924,11 +1926,12 @@ test("SigV4Client.fetch aborts retry delays immediately", async () => {
   });
   const startedAt = Date.now();
   await assert.rejects(
-    () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      method: "PUT",
-      signal: controller.signal,
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        method: "PUT",
+        signal: controller.signal,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /AbortError|aborted/
   );
   assert.equal(calls, 1);
@@ -1943,22 +1946,26 @@ test("SigV4Client.fetch cancels retryable response bodies before aborting", asyn
     initialRetryDelayMs: 0,
     fetch: async () => {
       controller.abort();
-      return new Response(new ReadableStream({
-        start(innerController) {
-          innerController.enqueue(new TextEncoder().encode("retry"));
-        },
-        cancel() {
-          cancelled += 1;
-        },
-      }), { status: 500 });
+      return new Response(
+        new ReadableStream({
+          start(innerController) {
+            innerController.enqueue(new TextEncoder().encode("retry"));
+          },
+          cancel() {
+            cancelled += 1;
+          },
+        }),
+        { status: 500 }
+      );
     },
   });
   await assert.rejects(
-    () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      method: "PUT",
-      signal: controller.signal,
-      signing: { signingDate: FIXED_AMZ_DATE },
-    }),
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        method: "PUT",
+        signal: controller.signal,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
     /AbortError|aborted/
   );
   assert.equal(cancelled, 1);
@@ -1985,15 +1992,18 @@ test("SigV4Client.fetch signs Request input payload hashes from the Request body
       return new Response("ok");
     },
   });
-  const response = await client.fetch(new Request(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: "{}",
-  }), {
-    signing: { signingDate: FIXED_AMZ_DATE },
-  });
+  const response = await client.fetch(
+    new Request(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: "{}",
+    }),
+    {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    }
+  );
   assert.equal(response.status, 200);
 });
 
@@ -2006,14 +2016,17 @@ test("SigV4Client.fetch cancels retryable response bodies before retrying", asyn
     fetch: async () => {
       calls += 1;
       if (calls === 1) {
-        return new Response(new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode("retry"));
-          },
-          cancel() {
-            cancelled += 1;
-          },
-        }), { status: 500 });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("retry"));
+            },
+            cancel() {
+              cancelled += 1;
+            },
+          }),
+          { status: 500 }
+        );
       }
       return new Response("ok");
     },
@@ -2110,11 +2123,11 @@ test("SigV4Client.fetch caps exponential retry delay", async () => {
   const delays = [];
   try {
     Math.random = () => 1;
-    globalThis.setTimeout = ((callback, delay) => {
+    globalThis.setTimeout = (callback, delay) => {
       delays.push(delay);
       callback();
       return 0;
-    });
+    };
     const client = lambdaClient({
       retries: 2,
       initialRetryDelayMs: 50,
@@ -2134,9 +2147,10 @@ test("SigV4Client.fetch caps exponential retry delay", async () => {
 
 test("SigV4Client rejects negative retries", () => {
   assert.throws(
-    () => lambdaClient({
-      retries: -1,
-    }),
+    () =>
+      lambdaClient({
+        retries: -1,
+      }),
     /retries must be a non-negative integer/
   );
 });
@@ -2148,10 +2162,11 @@ test("SigV4Client.fetch rejects invalid HTTP methods before retry planning", asy
   });
   for (const method of [123, Symbol("GET")]) {
     await assert.rejects(
-      () => client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-        method,
-        signing: { signingDate: FIXED_AMZ_DATE },
-      }),
+      () =>
+        client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          method,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
       /method must be a valid HTTP token/
     );
   }

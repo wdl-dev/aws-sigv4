@@ -164,9 +164,7 @@ export class SigV4Client {
   private readonly fetchFn: typeof fetch;
 
   constructor(options: SigV4ClientOptions) {
-    if (!options || typeof options !== "object") {
-      throw new TypeError("SigV4Client options are required");
-    }
+    requireOptionsObject(options, "SigV4Client options are required");
     requireCredentialComponent(options.accessKeyId, "accessKeyId");
     requireSecretAccessKey(options.secretAccessKey);
     requireCredentialComponent(options.service, "service");
@@ -181,7 +179,7 @@ export class SigV4Client {
     this.sessionToken = options.sessionToken;
     this.service = options.service;
     this.region = options.region;
-    this.cache = requireSigningCache(options.cache, "cache") ?? new Map();
+    this.cache = requireSigningCache(options.cache, "cache") ?? new Map<string, ArrayBuffer>();
     this.retries = requireNonNegativeInteger(options.retries ?? 0, "retries");
     this.initialRetryDelayMs = requireNonNegativeFiniteNumber(options.initialRetryDelayMs ?? 50, "initialRetryDelayMs");
     this.maxRetryDelayMs = requireNonNegativeFiniteNumber(options.maxRetryDelayMs ?? 5000, "maxRetryDelayMs");
@@ -196,9 +194,8 @@ export class SigV4Client {
   }
 
   async sign(input: Request | string | URL, init: SigV4RequestInit = {}): Promise<Request> {
-    const requestInit: SigV4RequestInit = input instanceof Request
-      ? mergeDefinedRequestInit(requestInitFromRequest(input), init)
-      : { ...init };
+    const requestInit: SigV4RequestInit =
+      input instanceof Request ? mergeDefinedRequestInit(requestInitFromRequest(input), init) : { ...init };
     const signingOptions = normalizeClientSigningOptions(requestInit.signing);
     delete requestInit.signing;
 
@@ -209,7 +206,9 @@ export class SigV4Client {
 
     if (input instanceof Request) {
       url = input.url;
-      if (method === undefined) method = input.method;
+      if (method === undefined) {
+        method = input.method;
+      }
       headers = mergeHeaders(input.headers, headers);
       if (body === undefined && input.body) {
         body = input.clone().body;
@@ -223,22 +222,26 @@ export class SigV4Client {
     const requestUrl = parseRequestUrl(url);
     assertParsedRequestCanRepresentSignedUrl(requestUrl.pathname, service);
 
-    const signed = await signAwsRequestInternal({
-      accessKeyId: this.accessKeyId,
-      secretAccessKey: this.secretAccessKey,
-      sessionToken: this.sessionToken,
-      service,
-      region: signingOptions.region ?? this.region,
-      cache: this.cache,
-      unsignedPayload: signingOptions.unsignedPayload ?? this.unsignedPayload,
-      signAllHeaders: signingOptions.signAllHeaders ?? this.signAllHeaders,
-      unsignableHeaders: signingOptions.unsignableHeaders ?? this.unsignableHeaders,
-      signingDate: signingOptions.signingDate,
-      method: normalizedMethod,
-      url,
-      headers,
-      body,
-    }, await this.getSecretAccessKeyHash(), requestUrl);
+    const signed = await signAwsRequestInternal(
+      {
+        accessKeyId: this.accessKeyId,
+        secretAccessKey: this.secretAccessKey,
+        sessionToken: this.sessionToken,
+        service,
+        region: signingOptions.region ?? this.region,
+        cache: this.cache,
+        unsignedPayload: signingOptions.unsignedPayload ?? this.unsignedPayload,
+        signAllHeaders: signingOptions.signAllHeaders ?? this.signAllHeaders,
+        unsignableHeaders: signingOptions.unsignableHeaders ?? this.unsignableHeaders,
+        signingDate: signingOptions.signingDate,
+        method: normalizedMethod,
+        url,
+        headers,
+        body,
+      },
+      await this.getSecretAccessKeyHash(),
+      requestUrl
+    );
 
     assertRequestCanRepresentSignedUrl(signed.url, service);
     const signedInit = requestInitForSignedRequest(requestInit, signed);
@@ -279,23 +282,21 @@ export class SigV4Client {
       try {
         response = await fetchFn(request);
       } catch (err) {
-        if (
-          attempt === this.retries
-          || !isIdempotentMethod(request.method)
-          || isAbortError(err, request)
-        ) {
+        if (attempt === this.retries || !isIdempotentMethod(request.method) || isAbortError(err, request)) {
           throw err;
         }
         await sleep(Math.random() * this.retryDelayMs(attempt), request.signal);
         continue;
       }
-      const retryableResponse = isIdempotentMethod(request.method)
-        && (response.status >= 500 || response.status === 429);
+      const retryableResponse =
+        isIdempotentMethod(request.method) && (response.status >= 500 || response.status === 429);
       if (attempt === this.retries || !retryableResponse) {
         return response;
       }
       await cancelResponseBody(response);
-      if (request.signal.aborted) throw abortReason(request.signal);
+      if (request.signal.aborted) {
+        throw abortReason(request.signal);
+      }
       await sleep(Math.random() * this.retryDelayMs(attempt), request.signal);
     }
     throw new Error("unreachable retry loop exit");
@@ -307,7 +308,7 @@ export class SigV4Client {
   }
 
   private retryDelayMs(attempt: number): number {
-    return Math.min(this.maxRetryDelayMs, this.initialRetryDelayMs * (2 ** attempt));
+    return Math.min(this.maxRetryDelayMs, this.initialRetryDelayMs * 2 ** attempt);
   }
 }
 
@@ -317,12 +318,10 @@ export async function signAwsRequest(options: SignAwsRequestOptions): Promise<Si
 
 async function signAwsRequestInternal(
   options: SignAwsRequestOptions,
-  secretAccessKeyHash?: string | undefined,
-  parsedRequestUrl?: ParsedRequestUrl | undefined
+  secretAccessKeyHash?: string,
+  parsedRequestUrl?: ParsedRequestUrl
 ): Promise<SignedAwsRequest> {
-  if (!options || typeof options !== "object") {
-    throw new TypeError("signAwsRequest options are required");
-  }
+  requireOptionsObject(options, "signAwsRequest options are required");
   requireCredentialComponent(options.accessKeyId, "accessKeyId");
   requireSecretAccessKey(options.secretAccessKey);
   requireCredentialComponent(options.service, "service");
@@ -333,7 +332,7 @@ async function signAwsRequestInternal(
     rejectSurroundingWhitespace(options.sessionToken, "sessionToken");
   }
   const cache = requireSigningCache(options.cache, "cache");
-  if (options.url == null) throw new TypeError("url is a required option");
+  requireDefinedOption(options.url, "url");
 
   const requestUrl = parsedRequestUrl ?? parseRequestUrl(options.url);
   const url = requestUrl.url;
@@ -361,7 +360,9 @@ async function signAwsRequestInternal(
 
   headers.set(AMZ_DATE_HEADER, amzDate);
   headers.set(HOST_HEADER, url.host);
-  if (options.sessionToken) headers.set(AMZ_SECURITY_TOKEN_HEADER, options.sessionToken);
+  if (options.sessionToken) {
+    headers.set(AMZ_SECURITY_TOKEN_HEADER, options.sessionToken);
+  }
 
   const canonicalPayloadHash = await canonicalPayloadHashValue(headers, preparedBody.bytes, unsignedPayload);
   if (options.service === "s3" && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
@@ -379,12 +380,7 @@ async function signAwsRequestInternal(
     signedHeaders,
     canonicalPayloadHash,
   ].join("\n");
-  const stringToSign = [
-    AWS_ALGORITHM,
-    amzDate,
-    credentialScope,
-    await sha256Hex(canonicalRequest),
-  ].join("\n");
+  const stringToSign = [AWS_ALGORITHM, amzDate, credentialScope, await sha256Hex(canonicalRequest)].join("\n");
   const signature = await signatureHex({
     secretAccessKey: options.secretAccessKey,
     secretAccessKeyHash,
@@ -395,11 +391,14 @@ async function signAwsRequestInternal(
     cache,
   });
 
-  headers.set(AUTHORIZATION_HEADER, [
-    `${AWS_ALGORITHM} Credential=${options.accessKeyId}/${credentialScope}`,
-    `SignedHeaders=${signedHeaders}`,
-    `Signature=${signature}`,
-  ].join(", "));
+  headers.set(
+    AUTHORIZATION_HEADER,
+    [
+      `${AWS_ALGORITHM} Credential=${options.accessKeyId}/${credentialScope}`,
+      `SignedHeaders=${signedHeaders}`,
+      `Signature=${signature}`,
+    ].join(", ")
+  );
 
   return {
     method,
@@ -460,7 +459,9 @@ function stripUrlFragment(value: string): string {
 function mergeHeaders(base: HeadersInit, override: HeadersInit | undefined): Headers {
   const headers = new Headers(base);
   if (override) {
-    new Headers(override).forEach((value, name) => headers.set(name, value));
+    new Headers(override).forEach((value, name) => {
+      headers.set(name, value);
+    });
   }
   return headers;
 }
@@ -502,7 +503,9 @@ function requestInitFromRequest(request: Request): RequestInit {
 }
 
 function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOptions {
-  if (options === undefined) return {};
+  if (options === undefined) {
+    return {};
+  }
   if (options === null || typeof options !== "object") {
     throw new TypeError("init.signing must be an object");
   }
@@ -539,13 +542,19 @@ function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOpt
 }
 
 function requestBodyForInput(input: Request | string | URL, init: RequestInit): BodyInit | null | undefined {
-  if (init.body !== undefined) return init.body;
+  if (init.body !== undefined) {
+    return init.body;
+  }
   return input instanceof Request ? input.body : undefined;
 }
 
 function methodForRequest(input: Request | string | URL, init: RequestInit): string {
-  if (init.method !== undefined) return normalizeMethod(init.method);
-  if (input instanceof Request) return normalizeMethod(input.method);
+  if (init.method !== undefined) {
+    return normalizeMethod(init.method);
+  }
+  if (input instanceof Request) {
+    return normalizeMethod(input.method);
+  }
   return defaultMethod(init.body);
 }
 
@@ -642,7 +651,9 @@ async function reusableRequestInit(
     ...init,
     headers,
   };
-  if (body.body !== undefined) out.body = body.body;
+  if (body.body !== undefined) {
+    out.body = body.body;
+  }
   return out;
 }
 
@@ -652,7 +663,9 @@ function requestInitForSignedRequest(base: RequestInit, signed: SignedAwsRequest
     method: signed.method,
     headers: signed.headers,
   };
-  if (signed.body !== undefined) out.body = signed.body;
+  if (signed.body !== undefined) {
+    out.body = signed.body;
+  }
   return out;
 }
 
@@ -720,7 +733,9 @@ function requireNonNegativeFiniteNumber(value: number, name: string): number {
 }
 
 function optionalBoolean(value: unknown, name: string): boolean | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   if (typeof value !== "boolean") {
     throw new TypeError(`${name} must be a boolean`);
   }
@@ -764,7 +779,9 @@ function dateTimeValue(date: Date): number {
 
 function isValidIsoDate(value: string): boolean {
   const match = ISO_DATE_RE.exec(value);
-  if (!match) return false;
+  if (!match) {
+    return false;
+  }
   const [datePart, timePart] = value.split("T") as [string, string];
   const [yearText, monthText, dayText] = datePart.split("-") as [string, string, string];
   const [hourText, minuteText, secondText] = timePart.split(/[.:Z+-]/u) as [string, string, string];
@@ -799,12 +816,12 @@ function isValidDateParts(
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
   date.setUTCFullYear(year);
   return (
-    date.getUTCFullYear() === year
-    && date.getUTCMonth() === month - 1
-    && date.getUTCDate() === day
-    && date.getUTCHours() === hour
-    && date.getUTCMinutes() === minute
-    && date.getUTCSeconds() === second
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second
   );
 }
 
@@ -813,8 +830,12 @@ function canonicalHeaderBlock(url: URL, headers: Headers, options: CanonicalHead
   const signable = [...new Set([HOST_HEADER, ...headers.keys()])]
     .filter((header) => header !== AUTHORIZATION_HEADER)
     .filter((header) => {
-      if (MANDATORY_SIGNED_HEADERS.has(header)) return true;
-      if (userUnsignable.has(header)) return false;
+      if (MANDATORY_SIGNED_HEADERS.has(header)) {
+        return true;
+      }
+      if (userUnsignable.has(header)) {
+        return false;
+      }
       return options.signAllHeaders || !DEFAULT_UNSIGNABLE_HEADERS.has(header);
     })
     .sort();
@@ -835,7 +856,9 @@ function canonicalHeaderValue(value: string): string {
   let pendingSpace = false;
   for (const char of value) {
     if (char === " " || char === "\t") {
-      if (normalized.length > 0) pendingSpace = true;
+      if (normalized.length > 0) {
+        pendingSpace = true;
+      }
       continue;
     }
     if (pendingSpace) {
@@ -848,11 +871,13 @@ function canonicalHeaderValue(value: string): string {
 }
 
 function normalizeUnsignableHeaders(value: unknown, name: string): string[] | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   if (
-    value === null
-    || typeof value === "string"
-    || typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function"
+    value === null ||
+    typeof value === "string" ||
+    typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function"
   ) {
     throw new TypeError(`${name} must be an iterable of header names`);
   }
@@ -864,16 +889,20 @@ function normalizeUnsignableHeaders(value: unknown, name: string): string[] | un
   });
 }
 
-function snapshotUnsignableHeaders(
-  owner: object,
-  source: unknown,
-  name: string
-): string[] | undefined {
-  if (source === undefined) return undefined;
-  if (!isIterable(source)) return normalizeUnsignableHeaders(source, name);
-  if (!isOneShotIterable(source)) return normalizeUnsignableHeaders(source, name);
+function snapshotUnsignableHeaders(owner: object, source: unknown, name: string): string[] | undefined {
+  if (source === undefined) {
+    return undefined;
+  }
+  if (!isIterable(source)) {
+    return normalizeUnsignableHeaders(source, name);
+  }
+  if (!isOneShotIterable(source)) {
+    return normalizeUnsignableHeaders(source, name);
+  }
   const cached = UNSIGNABLE_HEADER_SNAPSHOTS.get(owner);
-  if (cached && cached.source === source) return cached.value;
+  if (cached && cached.source === source) {
+    return cached.value;
+  }
   const value = normalizeUnsignableHeaders(source, name);
   UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, value });
   return value;
@@ -884,30 +913,47 @@ function isOneShotIterable(value: Iterable<string>): boolean {
 }
 
 function isIterable(value: unknown): value is Iterable<string> {
-  return value !== null
-    && typeof value !== "string"
-    && typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function";
+  return (
+    value !== null &&
+    typeof value !== "string" &&
+    typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function"
+  );
 }
 
-function requireSigningCache(
-  value: Map<string, ArrayBuffer> | undefined,
-  name: string
-): Map<string, ArrayBuffer> | undefined {
-  if (value === undefined) return undefined;
-  if (
-    value === null
-    || typeof value !== "object"
-    || value instanceof WeakMap
-    || typeof (value as Map<string, ArrayBuffer>).get !== "function"
-    || typeof (value as Map<string, ArrayBuffer>).set !== "function"
-  ) {
+function requireOptionsObject(value: unknown, message: string): void {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(message);
+  }
+}
+
+function requireDefinedOption(value: unknown, name: string): void {
+  if (value === null || value === undefined) {
+    throw new TypeError(`${name} is a required option`);
+  }
+}
+
+function requireSigningCache(value: unknown, name: string): Map<string, ArrayBuffer> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isSigningCache(value)) {
     throw new TypeError(`${name} must be a Map-like cache`);
   }
   return value;
 }
 
+function isSigningCache(value: unknown): value is Map<string, ArrayBuffer> {
+  if (value === null || typeof value !== "object" || value instanceof WeakMap) {
+    return false;
+  }
+  const candidate = value as { get?: unknown; set?: unknown };
+  return typeof candidate.get === "function" && typeof candidate.set === "function";
+}
+
 function canonicalQuery(search: string): string {
-  if (search === "") return "";
+  if (search === "") {
+    return "";
+  }
   return search
     .slice(1)
     .split("&")
@@ -928,8 +974,12 @@ function canonicalQueryComponent(value: string): string {
 }
 
 function compareCodepoint(left: string, right: string): -1 | 0 | 1 {
-  if (left < right) return -1;
-  if (left > right) return 1;
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
   return 0;
 }
 
@@ -958,7 +1008,9 @@ function canonicalUriComponent(value: string, preserveSlash: boolean): string {
       continue;
     }
     const codePoint = value.codePointAt(index);
-    if (codePoint === undefined) break;
+    if (codePoint === undefined) {
+      break;
+    }
     const charValue = String.fromCodePoint(codePoint);
     try {
       out += encodeRfc3986(encodeURIComponent(charValue));
@@ -979,20 +1031,28 @@ function isHexPair(value: string, index: number): boolean {
 
 function isUnreservedByte(byte: number): boolean {
   return (
-    (byte >= 0x41 && byte <= 0x5a)
-    || (byte >= 0x61 && byte <= 0x7a)
-    || (byte >= 0x30 && byte <= 0x39)
-    || byte === 0x2d
-    || byte === 0x2e
-    || byte === 0x5f
-    || byte === 0x7e
+    (byte >= 0x41 && byte <= 0x5a) ||
+    (byte >= 0x61 && byte <= 0x7a) ||
+    (byte >= 0x30 && byte <= 0x39) ||
+    byte === 0x2d ||
+    byte === 0x2e ||
+    byte === 0x5f ||
+    byte === 0x7e
   );
 }
 
-async function canonicalPayloadHashValue(headers: Headers, body: Uint8Array, unsignedPayload: boolean): Promise<string> {
+async function canonicalPayloadHashValue(
+  headers: Headers,
+  body: Uint8Array,
+  unsignedPayload: boolean
+): Promise<string> {
   const explicit = headers.get(AMZ_CONTENT_SHA256_HEADER);
-  if (explicit) return explicit;
-  if (unsignedPayload) return UNSIGNED_PAYLOAD;
+  if (explicit) {
+    return explicit;
+  }
+  if (unsignedPayload) {
+    return UNSIGNED_PAYLOAD;
+  }
   return sha256Hex(body);
 }
 
@@ -1001,14 +1061,16 @@ async function prepareBody(
   headers: Headers,
   materialize: boolean
 ): Promise<PreparedBody> {
-  if (body == null) {
+  if (body === null || body === undefined) {
     return { body, bytes: new Uint8Array() };
   }
   if (body instanceof FormData) {
     rejectManualFormDataContentType(headers);
     const request = new Request("https://aws-sigv4.invalid/", { method: "POST", body });
     const contentType = request.headers.get(CONTENT_TYPE_HEADER);
-    if (contentType) headers.set(CONTENT_TYPE_HEADER, contentType);
+    if (contentType) {
+      headers.set(CONTENT_TYPE_HEADER, contentType);
+    }
     const bytes = new Uint8Array(await request.arrayBuffer());
     return { body: bytes, bytes };
   }
@@ -1031,7 +1093,9 @@ function rejectManualFormDataContentType(headers: Headers): void {
 }
 
 function setGeneratedContentType(body: BodyInit, headers: Headers): void {
-  if (headers.has(CONTENT_TYPE_HEADER)) return;
+  if (headers.has(CONTENT_TYPE_HEADER)) {
+    return;
+  }
   if (typeof body === "string") {
     headers.set(CONTENT_TYPE_HEADER, "text/plain;charset=UTF-8");
   } else if (body instanceof URLSearchParams) {
@@ -1042,17 +1106,29 @@ function setGeneratedContentType(body: BodyInit, headers: Headers): void {
 }
 
 async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
-  if (typeof body === "string") return textEncoder.encode(body);
-  if (body instanceof Uint8Array) return body;
-  if (body instanceof ArrayBuffer) return new Uint8Array(body);
-  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
-  if (body instanceof URLSearchParams) return textEncoder.encode(body.toString());
-  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer());
+  if (typeof body === "string") {
+    return textEncoder.encode(body);
+  }
+  if (body instanceof Uint8Array) {
+    return body;
+  }
+  if (body instanceof ArrayBuffer) {
+    return new Uint8Array(body);
+  }
+  if (ArrayBuffer.isView(body)) {
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  }
+  if (body instanceof URLSearchParams) {
+    return textEncoder.encode(body.toString());
+  }
+  if (body instanceof Blob) {
+    return new Uint8Array(await body.arrayBuffer());
+  }
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
 }
 
 async function signatureHex(options: SignatureOptions): Promise<string> {
-  const secretAccessKeyHash = options.secretAccessKeyHash ?? await sha256Hex(options.secretAccessKey);
+  const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
   const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
   let signingKey = options.cache?.get(cacheKey);
   if (!signingKey) {
@@ -1071,8 +1147,12 @@ async function sha256Hex(value: string | Uint8Array | ArrayBuffer): Promise<stri
 }
 
 function cryptoBufferSource(value: string | Uint8Array | ArrayBuffer): BufferSource {
-  if (typeof value === "string") return textEncoder.encode(value);
-  if (value instanceof ArrayBuffer) return value;
+  if (typeof value === "string") {
+    return textEncoder.encode(value);
+  }
+  if (value instanceof ArrayBuffer) {
+    return value;
+  }
   // WebCrypto BufferSource excludes SharedArrayBuffer-backed views in TS DOM types.
   if (ArrayBuffer.isView(value) && value.buffer instanceof ArrayBuffer) {
     return value as Uint8Array<ArrayBuffer>;
@@ -1109,11 +1189,20 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (!signal) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
-  if (signal.aborted) return Promise.reject(abortReason(signal));
+  if (signal.aborted) {
+    // Preserve AbortSignal.reason exactly; Web APIs allow non-Error reasons.
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    return Promise.reject(abortReason(signal));
+  }
   return new Promise((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout>;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => {
-      clearTimeout(timeout);
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+      signal.removeEventListener("abort", onAbort);
+      // Preserve AbortSignal.reason exactly; Web APIs allow non-Error reasons.
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
       reject(abortReason(signal));
     };
     signal.addEventListener("abort", onAbort, { once: true });

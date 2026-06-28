@@ -36,12 +36,20 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
     "prepack": "npm run build",
     "test": "npm run build && node --test test/aws-sigv4.test.js",
     "test:integration:s3": "npm run build && node --test test/s3-integration.test.js"
   },
   "devDependencies": {
-    "typescript": "6.0.3"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.62.0"
   },
   "engines": {
     "node": ">=24"

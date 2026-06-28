@@ -9,12 +9,14 @@ on:
       - "v*"
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   check:
     name: Verify tag and package
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     outputs:
       dist-tag: ${{ steps.version.outputs.dist-tag }}
 
@@ -28,11 +30,104 @@ jobs:
           node-version: 24.x
           cache: npm
 
+      - name: Require successful CI for tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Keep these names in sync with ci.yml job names.
+          required_jobs_json='["Node 24","Real AWS S3"]'
+          deadline=$((SECONDS + 1800))
+          retry_poll() {
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for required CI jobs on ${GITHUB_SHA}" >&2
+              exit 1
+            fi
+            sleep 15
+          }
+          while true; do
+            if ! runs_json="$(
+              gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+                -f branch=main \
+                -f head_sha="${GITHUB_SHA}" \
+                -f per_page=20
+            )"; then
+              echo "Could not read CI runs for ${GITHUB_SHA}; retrying" >&2
+              retry_poll
+              continue
+            fi
+            if ! run_id="$(
+              JSON="$runs_json" node --input-type=module -e '
+                let data = {};
+                try {
+                  data = JSON.parse(process.env.JSON || "{}");
+                } catch {}
+                const run = data.workflow_runs?.find((item) =>
+                  item.head_sha === process.env.GITHUB_SHA
+                  && item.head_branch === "main"
+                  && (item.event === "push" || item.event === "workflow_dispatch")
+                );
+                process.stdout.write(run?.id === undefined ? "" : String(run.id));
+              '
+            )"; then
+              echo "Could not parse CI runs for ${GITHUB_SHA}; retrying" >&2
+              retry_poll
+              continue
+            fi
+            if [ -z "$run_id" ]; then
+              conclusion="missing"
+            elif ! jobs_json="$(
+              gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" \
+                -f per_page=100
+            )"; then
+              echo "Could not read CI jobs for run ${run_id}; retrying" >&2
+              retry_poll
+              continue
+            else
+              if ! conclusion="$(
+                JSON="$jobs_json" REQUIRED_JOBS="$required_jobs_json" node --input-type=module -e '
+                  let data = {};
+                  try {
+                    data = JSON.parse(process.env.JSON || "{}");
+                  } catch {}
+                  const required = JSON.parse(process.env.REQUIRED_JOBS || "[]");
+                  const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+                  for (const name of required) {
+                    const job = jobs.find((item) => item.name === name);
+                    const state = job?.conclusion ?? job?.status ?? "missing";
+                    if (state !== "success") {
+                      process.stdout.write(`${name}:${state}`);
+                      process.exit(0);
+                    }
+                  }
+                  process.stdout.write("success");
+                '
+              )"; then
+                echo "Could not parse CI jobs for run ${run_id}; retrying" >&2
+                retry_poll
+                continue
+              fi
+            fi
+            case "$conclusion" in
+              success) exit 0 ;;
+              *:failure|*:cancelled|*:timed_out|*:action_required|*:neutral|*:skipped|*:stale|*:startup_failure)
+                echo "Required CI job for ${GITHUB_SHA} concluded: ${conclusion}" >&2
+                exit 1
+                ;;
+            esac
+            retry_poll
+          done
+
       - name: Install dependencies
         run: npm ci
 
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
+
+      - name: Lint source
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
 
       - name: Run tests
         run: npm test

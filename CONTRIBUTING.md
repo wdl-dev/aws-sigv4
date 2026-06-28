@@ -22,6 +22,8 @@ Use Node.js 24 or newer.
 Before opening a pull request, run:
 
 ```sh
+npm run lint
+npm run format:check
 npm test
 npm pack --dry-run
 git diff --cached --check

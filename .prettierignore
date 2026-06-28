@@ -1,0 +1,6 @@
+.agents/
+.claude/
+.codex/
+coverage/
+dist/
+node_modules/
