@@ -7,6 +7,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Added explicit `doubleUrlEncode` support for AWS services that expect
+  double-escaped canonical URI paths.
+- Preserved existing path percent-triplets verbatim during default
+  single-encoded path signing, including lowercase hex and percent-encoded
+  unreserved bytes, so signatures match the exact wire path.
+- Matched AWS SDK-style canonical header whitespace folding.
+- Added a real AWS S3 integration job backed by GitHub Actions OIDC and a fixed
+  least-privilege test bucket.
+- Added ESLint and Prettier checks to local verification, CI, and release
+  validation.
+- Gated release tags on successful main-branch CI, including the Node 24 and
+  real S3 validation jobs.
+
 ## 1.0.0
 
 - Switched npmjs publishing to GitHub Actions OIDC trusted publishing after the

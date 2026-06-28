@@ -53,6 +53,7 @@ const CLIENT_SIGNING_OPTION_KEYS = new Set([
   "unsignedPayload",
   "signAllHeaders",
   "unsignableHeaders",
+  "doubleUrlEncode",
 ]);
 const UNSIGNABLE_HEADER_SNAPSHOTS = new WeakMap<
   object,
@@ -72,6 +73,7 @@ export interface SigV4ClientOptions {
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
   unsignableHeaders?: Iterable<string> | undefined;
+  doubleUrlEncode?: boolean | undefined;
   fetch?: typeof fetch | undefined;
 }
 
@@ -90,6 +92,7 @@ export interface SignAwsRequestOptions {
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
   unsignableHeaders?: Iterable<string> | undefined;
+  doubleUrlEncode?: boolean | undefined;
 }
 
 export type SigV4RequestInit = RequestInit & {
@@ -103,6 +106,7 @@ export interface SigV4RequestSigningOptions {
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
   unsignableHeaders?: Iterable<string> | undefined;
+  doubleUrlEncode?: boolean | undefined;
 }
 
 export interface SignedAwsRequest {
@@ -161,6 +165,7 @@ export class SigV4Client {
   private readonly unsignedPayload: boolean | undefined;
   private readonly signAllHeaders: boolean | undefined;
   private readonly unsignableHeaders: string[] | undefined;
+  private readonly doubleUrlEncode: boolean | undefined;
   private readonly fetchFn: typeof fetch;
 
   constructor(options: SigV4ClientOptions) {
@@ -186,6 +191,7 @@ export class SigV4Client {
     this.unsignedPayload = optionalBoolean(options.unsignedPayload, "unsignedPayload");
     this.signAllHeaders = optionalBoolean(options.signAllHeaders, "signAllHeaders");
     this.unsignableHeaders = normalizeUnsignableHeaders(options.unsignableHeaders, "unsignableHeaders");
+    this.doubleUrlEncode = optionalBoolean(options.doubleUrlEncode, "doubleUrlEncode");
     const fetchFn = options.fetch === undefined ? globalThis.fetch : options.fetch;
     if (typeof fetchFn !== "function") {
       throw new TypeError(options.fetch === undefined ? "fetch is not available" : "fetch must be a function");
@@ -233,6 +239,7 @@ export class SigV4Client {
         unsignedPayload: signingOptions.unsignedPayload ?? this.unsignedPayload,
         signAllHeaders: signingOptions.signAllHeaders ?? this.signAllHeaders,
         unsignableHeaders: signingOptions.unsignableHeaders ?? this.unsignableHeaders,
+        doubleUrlEncode: signingOptions.doubleUrlEncode ?? this.doubleUrlEncode,
         signingDate: signingOptions.signingDate,
         method: normalizedMethod,
         url,
@@ -342,6 +349,7 @@ async function signAwsRequestInternal(
   const unsignedPayload = optionalBoolean(options.unsignedPayload, "unsignedPayload") ?? options.service === "s3";
   const signAllHeaders = optionalBoolean(options.signAllHeaders, "signAllHeaders");
   const unsignableHeaders = snapshotUnsignableHeaders(options, options.unsignableHeaders, "unsignableHeaders");
+  const doubleUrlEncode = optionalBoolean(options.doubleUrlEncode, "doubleUrlEncode") ?? false;
   if (unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
     headers.set(AMZ_CONTENT_SHA256_HEADER, UNSIGNED_PAYLOAD);
   }
@@ -374,7 +382,7 @@ async function signAwsRequestInternal(
   });
   const canonicalRequest = [
     method,
-    canonicalPathname(requestUrl.pathname),
+    canonicalPathname(requestUrl.pathname, options.service, doubleUrlEncode),
     canonicalQuery(requestUrl.search),
     `${canonicalHeaders}\n`,
     signedHeaders,
@@ -518,6 +526,7 @@ function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOpt
   const normalized = { ...record };
   const unsignedPayload = optionalBoolean(record.unsignedPayload, "init.signing.unsignedPayload");
   const signAllHeaders = optionalBoolean(record.signAllHeaders, "init.signing.signAllHeaders");
+  const doubleUrlEncode = optionalBoolean(record.doubleUrlEncode, "init.signing.doubleUrlEncode");
   const unsignableHeaders = snapshotUnsignableHeaders(
     options,
     record.unsignableHeaders,
@@ -537,6 +546,11 @@ function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOpt
     delete normalized.unsignableHeaders;
   } else {
     normalized.unsignableHeaders = unsignableHeaders;
+  }
+  if (doubleUrlEncode === undefined) {
+    delete normalized.doubleUrlEncode;
+  } else {
+    normalized.doubleUrlEncode = doubleUrlEncode;
   }
   return normalized;
 }
@@ -852,22 +866,7 @@ function canonicalHeaderBlock(url: URL, headers: Headers, options: CanonicalHead
 }
 
 function canonicalHeaderValue(value: string): string {
-  const normalized: string[] = [];
-  let pendingSpace = false;
-  for (const char of value) {
-    if (char === " " || char === "\t") {
-      if (normalized.length > 0) {
-        pendingSpace = true;
-      }
-      continue;
-    }
-    if (pendingSpace) {
-      normalized.push(" ");
-      pendingSpace = false;
-    }
-    normalized.push(char);
-  }
-  return normalized.join("");
+  return value.trim().replace(/\s+/gu, " ");
 }
 
 function normalizeUnsignableHeaders(value: unknown, name: string): string[] | undefined {
@@ -987,8 +986,64 @@ function encodeRfc3986(value: string): string {
   return value.replace(RFC3986_EXTRA_ESCAPE_RE, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
-function canonicalPathname(pathname: string): string {
-  return canonicalUriComponent(pathname, true);
+function canonicalPathname(pathname: string, service: string, doubleUrlEncode: boolean): string {
+  if (!doubleUrlEncode) {
+    return canonicalSingleEncodedPathname(pathname);
+  }
+  if (service !== "s3") {
+    if (hasDotPathSegment(pathname)) {
+      throw new TypeError("non-S3 doubleUrlEncode URLs must not contain dot path segments");
+    }
+    return canonicalDoubleEncodedPathname(collapsePathSlashes(pathname));
+  }
+  return canonicalDoubleEncodedPathname(pathname);
+}
+
+function canonicalSingleEncodedPathname(pathname: string): string {
+  let out = "";
+  for (let index = 0; index < pathname.length;) {
+    const char = pathname[index];
+    if (char === "/") {
+      out += "/";
+      index += 1;
+      continue;
+    }
+    if (char === "%" && isHexPair(pathname, index + 1)) {
+      out += pathname.slice(index, index + 3);
+      index += 3;
+      continue;
+    }
+    const codePoint = pathname.codePointAt(index);
+    if (codePoint === undefined) {
+      break;
+    }
+    const charValue = String.fromCodePoint(codePoint);
+    try {
+      out += encodeRfc3986(encodeURIComponent(charValue));
+    } catch (err) {
+      if (err instanceof URIError) {
+        throw new TypeError("url must not contain invalid UTF-16");
+      }
+      throw err;
+    }
+    index += charValue.length;
+  }
+  return out;
+}
+
+function canonicalDoubleEncodedPathname(pathname: string): string {
+  try {
+    return encodeRfc3986(encodeURIComponent(pathname)).replace(/%2F/gu, "/");
+  } catch (err) {
+    if (err instanceof URIError) {
+      throw new TypeError("url must not contain invalid UTF-16");
+    }
+    throw err;
+  }
+}
+
+function collapsePathSlashes(pathname: string): string {
+  return pathname.replace(/\/+/gu, "/");
 }
 
 function canonicalUriComponent(value: string, preserveSlash: boolean): string {

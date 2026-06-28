@@ -11,6 +11,7 @@ const SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
 const SESSION_TOKEN = "session-token-example";
 const FIXED_AMZ_DATE = "20260616T010203Z";
 const LAMBDA_ENDPOINT = "https://lambda.ap-northeast-1.amazonaws.com";
+const EXECUTE_API_ENDPOINT = "https://abc123.execute-api.ap-northeast-1.amazonaws.com";
 const S3_ENDPOINT = "https://s3.us-east-1.amazonaws.com";
 
 function lambdaClient(options = {}) {
@@ -18,6 +19,16 @@ function lambdaClient(options = {}) {
     accessKeyId: ACCESS_KEY_ID,
     secretAccessKey: SECRET_ACCESS_KEY,
     service: "lambda",
+    region: "ap-northeast-1",
+    ...options,
+  });
+}
+
+function executeApiClient(options = {}) {
+  return new SigV4Client({
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "execute-api",
     region: "ap-northeast-1",
     ...options,
   });
@@ -38,6 +49,17 @@ function lambdaRequest(options) {
     accessKeyId: ACCESS_KEY_ID,
     secretAccessKey: SECRET_ACCESS_KEY,
     service: "lambda",
+    region: "ap-northeast-1",
+    signingDate: FIXED_AMZ_DATE,
+    ...options,
+  });
+}
+
+function executeApiRequest(options) {
+  return signAwsRequest({
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "execute-api",
     region: "ap-northeast-1",
     signingDate: FIXED_AMZ_DATE,
     ...options,
@@ -297,6 +319,51 @@ test("canonical S3 paths preserve encoded slash bytes", async () => {
   assert.notEqual(signedEncodedSlash.headers.get("authorization"), signedPathSlash.headers.get("authorization"));
 });
 
+test("canonical S3 paths preserve encoded unreserved bytes", async () => {
+  const signedEncodedTilde = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/my%7Efile.txt`,
+  });
+  const signedLiteralTilde = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/my~file.txt`,
+  });
+  const signedEncodedLetter = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/%41.txt`,
+  });
+  const signedLiteralLetter = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/A.txt`,
+  });
+  assert.equal(
+    signedEncodedTilde.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=14f848760fef301c5dd9c5fd5d5096989f196be87ed942a3f9d3b9c0a3199eda"
+  );
+  assert.notEqual(signedEncodedTilde.headers.get("authorization"), signedLiteralTilde.headers.get("authorization"));
+  assert.equal(
+    signedEncodedLetter.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=5da5a18bc3ad5521dc60afe7630eae9314577accf1f24822b76b54e44e2af194"
+  );
+  assert.notEqual(signedEncodedLetter.headers.get("authorization"), signedLiteralLetter.headers.get("authorization"));
+});
+
+test("canonical S3 paths preserve percent-encoded hex case", async () => {
+  const signedLowercaseHex = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/my%2bfolder/file.txt`,
+  });
+  const signedUppercaseHex = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/my%2Bfolder/file.txt`,
+  });
+  assert.equal(
+    signedLowercaseHex.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=01c504190d0feedaceeb52da046a73d5695d03d9e95d8dc4ea10bae5b17c4985"
+  );
+  assert.notEqual(signedLowercaseHex.headers.get("authorization"), signedUppercaseHex.headers.get("authorization"));
+});
+
 test("canonical S3 paths preserve dot segments from string URLs", async () => {
   const base = {
     method: "GET",
@@ -344,6 +411,166 @@ test("URL object inputs use platform-normalized path and query", async () => {
   assert.equal(
     signed.headers.get("authorization"),
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=6994c4a7114a23fe9ffc83188c968d741d73fb88a6f3e00d889e81085006c930"
+  );
+});
+
+test("doubleUrlEncode double-escapes non-S3 canonical path bytes", async () => {
+  const url = `${EXECUTE_API_ENDPOINT}/prod/my+folder/a%2Fb/%7E`;
+  const signedDefault = await executeApiRequest({
+    method: "GET",
+    url,
+  });
+  const signedDoubleEncoded = await executeApiRequest({
+    method: "GET",
+    url,
+    doubleUrlEncode: true,
+  });
+  assert.equal(
+    signedDefault.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=5ae33dd5d01776fcb1fb836dd84c6e28d168b21da37ab3506624ec211dfc9c7c"
+  );
+  assert.equal(
+    signedDoubleEncoded.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=7635698892bbcc2d515044be999eaba42348d3b1ec8b78436b7cc0da8cc0a5ac"
+  );
+});
+
+test("doubleUrlEncode distinguishes literal plus from an encoded plus byte", async () => {
+  const signedLiteralPlus = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/my+folder/file.txt`,
+    doubleUrlEncode: true,
+  });
+  const signedEncodedPlus = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/my%2Bfolder/file.txt`,
+    doubleUrlEncode: true,
+  });
+  assert.equal(
+    signedLiteralPlus.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=7ba4625b596ebe31fa2c3f7a79b2f2c8eadc98ecea15a82ec819d15b6efbab2a"
+  );
+  assert.equal(
+    signedEncodedPlus.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=09284d1e5eee0d09f4c339b6143ee444a6c6d5209c4fef9285757de9bc10f02e"
+  );
+  assert.notEqual(signedLiteralPlus.headers.get("authorization"), signedEncodedPlus.headers.get("authorization"));
+});
+
+test("doubleUrlEncode encodes literal sub-delimiters once", async () => {
+  const signed = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/a=b&c/d`,
+    doubleUrlEncode: true,
+  });
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=34057f1b4cbc44a331d5f01379667ce237f2822cc106569ebe47cd0ada9a451b"
+  );
+});
+
+test("doubleUrlEncode preserves percent-encoded hex case", async () => {
+  const signedLowercaseHex = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/u/%2fpath`,
+    doubleUrlEncode: true,
+  });
+  const signedUppercaseHex = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/u/%2Fpath`,
+    doubleUrlEncode: true,
+  });
+  assert.equal(
+    signedLowercaseHex.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=899b842d343860ae1abc9439a9364547415fa92aa679f680e5f5636973b46d24"
+  );
+  assert.equal(
+    signedUppercaseHex.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=a06a8e197c49f0e572815bbd119335cc3e6a049673faf5d4f59898ce4a495357"
+  );
+  assert.notEqual(signedLowercaseHex.headers.get("authorization"), signedUppercaseHex.headers.get("authorization"));
+});
+
+test("doubleUrlEncode leaves canonical query encoding single-escaped", async () => {
+  const signed = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/my+folder/file.txt?prefix=a%2Fb&marker=x+y`,
+    doubleUrlEncode: true,
+  });
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=a22882241e6624b702b760f316e3cc51924f84ce8b15a3eeb819fe242cef4a87"
+  );
+});
+
+test("doubleUrlEncode rejects non-S3 dot path segments", async () => {
+  for (const path of ["/prod/a/../b/./c", "/prod/a/b/..", "/prod/a/%2E%2E/b"]) {
+    await assert.rejects(
+      () =>
+        executeApiRequest({
+          method: "GET",
+          url: `${EXECUTE_API_ENDPOINT}${path}`,
+          doubleUrlEncode: true,
+        }),
+      /non-S3 doubleUrlEncode URLs must not contain dot path segments/
+    );
+  }
+});
+
+test("doubleUrlEncode collapses repeated slashes in non-S3 canonical paths", async () => {
+  const signedRepeatedSlashes = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod//resources///v2/`,
+    doubleUrlEncode: true,
+  });
+  const signedNormalized = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/resources/v2/`,
+    doubleUrlEncode: true,
+  });
+  assert.equal(
+    signedRepeatedSlashes.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=4240e1d62558f87a6bd2646f0c7342e8f11b8c4263e89c95334dfaf2874fa13b"
+  );
+  assert.equal(signedRepeatedSlashes.headers.get("authorization"), signedNormalized.headers.get("authorization"));
+});
+
+test("SigV4Client doubleUrlEncode default can be overridden per request", async () => {
+  const url = `${EXECUTE_API_ENDPOINT}/prod/my+folder/a%2Fb/%7E`;
+  const client = executeApiClient({
+    doubleUrlEncode: true,
+  });
+  const signedDefault = await client.sign(url, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  const signedOverride = await client.sign(url, {
+    signing: { signingDate: FIXED_AMZ_DATE, doubleUrlEncode: false },
+  });
+  assert.equal(
+    signedDefault.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=7635698892bbcc2d515044be999eaba42348d3b1ec8b78436b7cc0da8cc0a5ac"
+  );
+  assert.equal(
+    signedOverride.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=5ae33dd5d01776fcb1fb836dd84c6e28d168b21da37ab3506624ec211dfc9c7c"
+  );
+});
+
+test("S3 keeps single-encoded path semantics by default but can opt into doubleUrlEncode", async () => {
+  const url = `${S3_ENDPOINT}/example-bucket/my+folder/a%2Fb/%7E`;
+  const signedDefault = await s3Request({
+    method: "GET",
+    url,
+  });
+  const signedDoubleEncoded = await s3Request({
+    method: "GET",
+    url,
+    doubleUrlEncode: true,
+  });
+  assert.notEqual(signedDefault.headers.get("authorization"), signedDoubleEncoded.headers.get("authorization"));
+  assert.equal(
+    signedDoubleEncoded.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=1c263cb8648e185d798d86901cda77513e4972474a2838afb79be85b2c5a0918"
   );
 });
 
@@ -396,12 +623,13 @@ test("canonical headers trim and collapse whitespace", async () => {
   assert.equal(spaced.headers.get("authorization"), trimmed.headers.get("authorization"));
 });
 
-test("canonical headers preserve non-OWS whitespace", async () => {
-  const signedNbsp = await lambdaRequest({
+test("canonical headers collapse SDK whitespace class", async () => {
+  // Match the AWS Smithy JS signer whitespace folding behavior.
+  const signedAwsWhitespace = await lambdaRequest({
     method: "GET",
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
     headers: {
-      "x-amz-meta-space": "a\u00a0b",
+      "x-amz-meta-space": "\v a\f\t b \u00a0",
     },
   });
   const signedSpace = await lambdaRequest({
@@ -411,7 +639,7 @@ test("canonical headers preserve non-OWS whitespace", async () => {
       "x-amz-meta-space": "a b",
     },
   });
-  assert.notEqual(signedNbsp.headers.get("authorization"), signedSpace.headers.get("authorization"));
+  assert.equal(signedAwsWhitespace.headers.get("authorization"), signedSpace.headers.get("authorization"));
 });
 
 test("range is signed by default when present", async () => {
@@ -1050,6 +1278,7 @@ test("SigV4Client rejects non-object init.signing values", async () => {
 
 test("signing rejects non-boolean signing options", async () => {
   assert.throws(() => lambdaClient({ unsignedPayload: "false" }), /unsignedPayload must be a boolean/);
+  assert.throws(() => lambdaClient({ doubleUrlEncode: "false" }), /doubleUrlEncode must be a boolean/);
   await assert.rejects(
     () =>
       lambdaRequest({
@@ -1060,6 +1289,15 @@ test("signing rejects non-boolean signing options", async () => {
       }),
     /unsignedPayload must be a boolean/
   );
+  await assert.rejects(
+    () =>
+      lambdaRequest({
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        doubleUrlEncode: "false",
+      }),
+    /doubleUrlEncode must be a boolean/
+  );
   const client = lambdaClient();
   await assert.rejects(
     () =>
@@ -1069,6 +1307,15 @@ test("signing rejects non-boolean signing options", async () => {
         },
       }),
     /init\.signing\.signAllHeaders must be a boolean/
+  );
+  await assert.rejects(
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          doubleUrlEncode: "false",
+        },
+      }),
+    /init\.signing\.doubleUrlEncode must be a boolean/
   );
 });
 
@@ -1798,6 +2045,25 @@ test("SigV4Client.fetch matches sign() payload hash headers", async () => {
   assert.equal(response.status, 200);
   assert.equal(fetched.headers.get("x-amz-content-sha256"), signed.headers.get("x-amz-content-sha256"));
   assert.equal(fetched.headers.get("authorization"), signed.headers.get("authorization"));
+});
+
+test("SigV4Client.fetch passes doubleUrlEncode through request preparation", async () => {
+  let fetched;
+  const client = executeApiClient({
+    doubleUrlEncode: true,
+    fetch: async (request) => {
+      fetched = request;
+      return new Response("ok");
+    },
+  });
+  const response = await client.fetch(`${EXECUTE_API_ENDPOINT}/prod/my+folder/file.txt`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(
+    fetched.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=7ba4625b596ebe31fa2c3f7a79b2f2c8eadc98ecea15a82ec819d15b6efbab2a"
+  );
 });
 
 test("SigV4Client.fetch preserves Request content-type when init overrides body", async () => {

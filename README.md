@@ -85,8 +85,8 @@ S3-compatible smoke test, not as an AWS S3 semantics or signature oracle.
 
 Required options are `accessKeyId`, `secretAccessKey`, `service`, and `region`.
 Optional options are `sessionToken`, `cache`, `retries`, `initialRetryDelayMs`,
-`maxRetryDelayMs`, `unsignedPayload`, `signAllHeaders`, `unsignableHeaders`, and
-`fetch`.
+`maxRetryDelayMs`, `unsignedPayload`, `signAllHeaders`, `unsignableHeaders`,
+`doubleUrlEncode`, and `fetch`.
 
 `service: "s3"` defaults to `UNSIGNED-PAYLOAD`. Other services hash the request
 body by default. `retries` defaults to `0`.
@@ -99,8 +99,8 @@ SigV4 signing keys.
 
 Returns a signed `Request`. `input` may be a `Request`, string URL, or `URL`.
 `init.signing` can override per-request signing options such as `signingDate`,
-`service`, `region`, `unsignedPayload`, or `unsignableHeaders`; it cannot
-override credentials or `cache`.
+`service`, `region`, `unsignedPayload`, `unsignableHeaders`, or
+`doubleUrlEncode`; it cannot override credentials or `cache`.
 
 `URL` and `Request` inputs are already normalized by the platform URL parser.
 For raw paths that contain literal `.` or `..` path segments, use
@@ -111,6 +111,16 @@ represent them without path normalization.
 Canonical query signing ignores empty query segments, so `?a=1&&b=2` signs the
 same canonical query as `?a=1&b=2`. Explicit empty keys such as `?=value` are
 preserved.
+
+Path signing preserves the package's single-encoded default, including for S3
+object keys. With the default `doubleUrlEncode: false`, existing path
+percent-triplets are signed exactly as they appear on the wire, including
+lowercase hex and percent-encoded unreserved bytes such as `%7E` or `%41`.
+Set `doubleUrlEncode: true` only for AWS services or endpoints that expect
+AWS-style canonical URI escaping for non-S3 paths. It applies only to the path:
+literal reserved characters such as `+` and `=` are escaped once, while existing
+percent-encoded bytes have their `%` escaped. Query parameters keep the normal
+SigV4 canonical query encoding.
 
 ### `client.fetch(input, init)`
 
@@ -127,10 +137,12 @@ buffering when `retries: 0`; keep `retries: 0` for large streaming uploads.
 Lower-level helper that returns `{ method, url, headers, body }` without sending
 the request. Use this when another HTTP client owns transport, or when S3 object
 keys need raw string URL paths that web `Request` would normalize.
+It accepts the same signing options as `SigV4Client`, including
+`doubleUrlEncode`.
 It preserves string URL paths exactly. For S3, pass object key paths in
 percent-encoded form. For non-S3 services, pass path labels as literal values
 and avoid characters that cannot appear on the wire without percent encoding,
 such as spaces, literal `%`, or non-ASCII text. Literal `.` and `..` path
-segments are required for some S3 object keys, but non-S3 callers should
-normalize or reject dot segments before signing when the target service or
-transport applies path normalization.
+segments are required for some S3 object keys; with `doubleUrlEncode: true`,
+non-S3 paths reject dot segments and collapse repeated slashes before path
+escaping.
