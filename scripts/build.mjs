@@ -5,9 +5,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const rootDir = resolve(import.meta.dirname, "..");
 const outDir = join(rootDir, "dist");
 const workDir = mkdtempSync(join(tmpdir(), "aws-sigv4-build-"));
 const tscBin = join(rootDir, "node_modules", "typescript", "bin", "tsc");
