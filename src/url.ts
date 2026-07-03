@@ -36,12 +36,15 @@ export function parseRequestUrl(input: string | URL): ParsedRequestUrl {
       search: url.search,
     };
   }
-  const match = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*([^?#]*)?(\?[^#]*)?/u.exec(raw);
+  const match = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#]*)([^?#]*)?(\?[^#]*)?/u.exec(raw);
   if (!match) {
     throw new TypeError("url must include scheme://host");
   }
-  const pathname = match[1] || "/";
-  const search = match[2] || "";
+  if (!match[1]) {
+    throw new TypeError("url must include scheme://host");
+  }
+  const pathname = match[2] || "/";
+  const search = match[3] || "";
   if (!pathname.isWellFormed() || !search.isWellFormed()) {
     throw new TypeError("url must not contain invalid UTF-16");
   }
@@ -105,7 +108,7 @@ function hasMalformedPercentEncoding(value: string): boolean {
 }
 
 function canonicalQueryComponent(value: string): string {
-  return canonicalUriComponent(value, false);
+  return canonicalUriComponent(value);
 }
 
 function compareCodepoint(left: string, right: string): -1 | 0 | 1 {
@@ -169,15 +172,10 @@ function collapsePathSlashes(pathname: string): string {
   return pathname.replace(/\/+/gu, "/");
 }
 
-function canonicalUriComponent(value: string, preserveSlash: boolean): string {
+function canonicalUriComponent(value: string): string {
   let out = "";
   for (let index = 0; index < value.length;) {
     const char = value[index];
-    if (preserveSlash && char === "/") {
-      out += "/";
-      index += 1;
-      continue;
-    }
     if (char === "%" && isHexPair(value, index + 1)) {
       const hex = value.slice(index + 1, index + 3).toUpperCase();
       const byte = parseInt(hex, 16);

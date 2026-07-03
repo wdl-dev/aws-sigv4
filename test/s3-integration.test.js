@@ -98,7 +98,6 @@ test(
       } finally {
         if (objectCreated) {
           await expectOk(s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }), "delete object");
-          objectCreated = false;
         }
       }
     } finally {

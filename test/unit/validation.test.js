@@ -255,6 +255,17 @@ test("signing rejects string URLs without scheme slashes", async () => {
   );
 });
 
+test("signing rejects string URLs with empty authority", async () => {
+  await assert.rejects(
+    () =>
+      s3Request({
+        method: "GET",
+        url: "https:///example-bucket/key.txt",
+      }),
+    /url must include scheme:\/\/host/
+  );
+});
+
 test("signing rejects string URLs with backslashes", async () => {
   await assert.rejects(
     () =>
