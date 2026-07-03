@@ -95,6 +95,18 @@ If you pass a shared `cache`, treat it as sensitive process-local material. Cach
 keys do not contain the raw secret access key, but cache values are derived
 SigV4 signing keys.
 
+This package does not discover or compensate for service clock skew; pass
+`signingDate` when the signing time must be controlled. Validation and request
+representation failures throw standard `TypeError` instances rather than a
+custom error hierarchy.
+
+Signed header values must contain only printable ASCII characters (`0x20`
+through `0x7E`). Some runtime `Headers` implementations may reject unsupported
+values before this package can report its own validation error.
+Signer validation failures are checked before stream bodies are consumed where
+possible; platform `RequestInit` validation errors may still be reported by the
+runtime when the final `Request` is constructed.
+
 ### `client.sign(input, init)`
 
 Returns a signed `Request`. `input` may be a `Request`, string URL, or `URL`.
@@ -110,7 +122,9 @@ represent them without path normalization.
 
 Canonical query signing ignores empty query segments, so `?a=1&&b=2` signs the
 same canonical query as `?a=1&b=2`. Explicit empty keys such as `?=value` are
-preserved.
+preserved. Query components are not decoded as form data before signing: a
+literal `+` is signed as `%2B`, while a space must be sent as `%20`. Avoid raw
+`+` in query strings when the receiving service interprets it as a space.
 
 Path signing preserves the package's single-encoded default, including for S3
 object keys. With the default `doubleUrlEncode: false`, existing path

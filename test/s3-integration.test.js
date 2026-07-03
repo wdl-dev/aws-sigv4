@@ -42,6 +42,7 @@ test(
       retries: 1,
     });
     let bucketCreated = false;
+    let objectCreated = false;
 
     try {
       if (existingBucket === undefined) {
@@ -67,6 +68,7 @@ test(
           }),
           "put object"
         );
+        objectCreated = true;
 
         const getObject = await expectOk(
           s3.fetch(objectUrl, {
@@ -94,11 +96,17 @@ test(
         assert.equal((listText.match(/<Contents>/gu) || []).length, 1);
         assert.match(listText, new RegExp(`<Key>${escapeRegExp(key)}</Key>`));
       } finally {
-        await s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }).catch(() => {});
+        if (objectCreated) {
+          await expectOk(s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }), "delete object");
+          objectCreated = false;
+        }
       }
     } finally {
       if (bucketCreated) {
-        await s3.fetch(`${endpoint}/${bucket}`, { method: "DELETE", signal: requestSignal() }).catch(() => {});
+        await expectOk(
+          s3.fetch(`${endpoint}/${bucket}`, { method: "DELETE", signal: requestSignal() }),
+          "delete bucket"
+        );
       }
     }
   }

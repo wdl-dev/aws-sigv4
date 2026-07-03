@@ -7,6 +7,18 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Breaking: signed header values must now contain only printable ASCII
+  characters; tabs, other control characters, and non-ASCII whitespace are no
+  longer accepted before canonicalization.
+- Breaking: session tokens and credential scope components must now contain
+  only printable ASCII characters.
+- Fixed `SigV4Client` recovery after a transient secret hash digest rejection.
+- Documented query plus-sign behavior, clock-skew limits, and standard
+  `TypeError` validation failures.
+- Added canonical query percent-encoding and non-default port coverage.
+- Refactored source and unit tests into focused modules while keeping the
+  published package as a single-file `dist` entry.
+
 ## 1.1.0
 
 - Added explicit `doubleUrlEncode` support for AWS services that expect

@@ -1,0 +1,58 @@
+// SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
+// SPDX-License-Identifier: Apache-2.0
+
+export interface SigV4ClientOptions {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string | undefined;
+  service: string;
+  region: string;
+  cache?: Map<string, ArrayBuffer> | undefined;
+  retries?: number | undefined;
+  initialRetryDelayMs?: number | undefined;
+  maxRetryDelayMs?: number | undefined;
+  unsignedPayload?: boolean | undefined;
+  signAllHeaders?: boolean | undefined;
+  unsignableHeaders?: Iterable<string> | undefined;
+  doubleUrlEncode?: boolean | undefined;
+  fetch?: typeof fetch | undefined;
+}
+
+export interface SignAwsRequestOptions {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string | undefined;
+  service: string;
+  region: string;
+  method?: string | undefined;
+  url: string | URL;
+  headers?: HeadersInit | undefined;
+  body?: BodyInit | null | undefined;
+  cache?: Map<string, ArrayBuffer> | undefined;
+  signingDate?: string | Date | undefined;
+  unsignedPayload?: boolean | undefined;
+  signAllHeaders?: boolean | undefined;
+  unsignableHeaders?: Iterable<string> | undefined;
+  doubleUrlEncode?: boolean | undefined;
+}
+
+export type SigV4RequestInit = RequestInit & {
+  signing?: SigV4RequestSigningOptions | undefined;
+};
+
+export interface SigV4RequestSigningOptions {
+  service?: string | undefined;
+  region?: string | undefined;
+  signingDate?: string | Date | undefined;
+  unsignedPayload?: boolean | undefined;
+  signAllHeaders?: boolean | undefined;
+  unsignableHeaders?: Iterable<string> | undefined;
+  doubleUrlEncode?: boolean | undefined;
+}
+
+export interface SignedAwsRequest {
+  method: string;
+  url: string;
+  headers: Headers;
+  body?: BodyInit | null | undefined;
+}

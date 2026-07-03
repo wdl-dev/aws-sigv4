@@ -20,6 +20,7 @@
   "license": "Apache-2.0",
   "author": "Sean Consulting OÜ",
   "type": "module",
+  "sideEffects": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -35,12 +36,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "node scripts/build.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "prepack": "npm run build",
-    "test": "npm run build && node --test test/aws-sigv4.test.js",
+    "test": "npm run build && node --test test/unit/*.test.js",
     "test:integration:s3": "npm run build && node --test test/s3-integration.test.js"
   },
   "devDependencies": {
