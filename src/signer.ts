@@ -34,6 +34,7 @@ export async function signAwsRequest(options: SignAwsRequestOptions): Promise<Si
   return signAwsRequestInternal(options);
 }
 
+/** @internal */
 export async function signAwsRequestInternal(
   options: SignAwsRequestOptions,
   secretAccessKeyHash?: string,
@@ -74,6 +75,7 @@ export async function signAwsRequestInternal(
     unsignableHeaders,
     overwrittenHeaderNames: signerOverwrittenHeaderNames(options.sessionToken !== undefined),
   });
+  const canonicalPath = canonicalPathname(requestUrl.pathname, options.service, doubleUrlEncode);
 
   const preparedBody = await prepareBody(
     options.body,
@@ -100,7 +102,7 @@ export async function signAwsRequestInternal(
   });
   const canonicalRequest = [
     method,
-    canonicalPathname(requestUrl.pathname, options.service, doubleUrlEncode),
+    canonicalPath,
     canonicalQuery(requestUrl.search),
     `${canonicalHeaders}\n`,
     signedHeaders,

@@ -352,6 +352,29 @@ test("signAwsRequest snapshots one-shot unsignableHeaders iterables", async () =
   assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
 });
 
+test("signAwsRequest snapshots failed one-shot unsignableHeaders validation", async () => {
+  function* headersToSkip() {
+    yield "x-debug-only";
+    yield "";
+  }
+  const options = {
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "lambda",
+    region: "ap-northeast-1",
+    signingDate: FIXED_AMZ_DATE,
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    headers: {
+      "x-debug-only": "skip-me",
+    },
+    unsignableHeaders: headersToSkip(),
+  };
+  const message = /unsignableHeaders must contain only non-empty strings/;
+  await assert.rejects(() => signAwsRequest(options), message);
+  await assert.rejects(() => signAwsRequest(options), message);
+});
+
 test("SigV4Client rereads reusable unsignableHeaders iterables", async () => {
   const unsignableHeaders = ["x-debug-only"];
   const client = lambdaClient();

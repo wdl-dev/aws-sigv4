@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { createHash, createHmac } from "node:crypto";
 import { test } from "node:test";
 
 import { signAwsRequest } from "../../dist/index.js";
@@ -17,13 +18,32 @@ import {
   S3_FIXTURES,
   SECRET_ACCESS_KEY,
   SESSION_TOKEN,
+  assertHelloStreamReadable,
   awsS3ExampleRequest,
   executeApiClient,
   executeApiRequest,
+  helloStream,
   lambdaRequest,
   s3Client,
   s3Request,
 } from "./helpers.js";
+
+function sha256Hex(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function hmacBytes(key, value) {
+  return createHmac("sha256", key).update(value).digest();
+}
+
+function hmacHex(key, value) {
+  return createHmac("sha256", key).update(value).digest("hex");
+}
+
+function signingKey(date, region, service) {
+  return hmacBytes(hmacBytes(hmacBytes(hmacBytes(`AWS4${SECRET_ACCESS_KEY}`, date), region), service), "aws4_request");
+}
+
 test("S3 signing supports unsigned payload golden vectors", async () => {
   for (const fixture of S3_FIXTURES) {
     const client = s3Client({
@@ -98,6 +118,39 @@ test("AWS IAM ListUsers official SigV4 example matches the published signature",
   assert.equal(
     signed.headers.get("authorization"),
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7"
+  );
+});
+
+test("temporary credentials sign x-amz-security-token in canonical headers", async () => {
+  const signed = await signAwsRequest({
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    sessionToken: SESSION_TOKEN,
+    service: "sts",
+    region: "us-east-1",
+    method: "GET",
+    url: "https://sts.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15",
+    signingDate: FIXED_AMZ_DATE,
+  });
+  const canonicalRequest = [
+    "GET",
+    "/",
+    "Action=GetCallerIdentity&Version=2011-06-15",
+    "host:sts.amazonaws.com\nx-amz-date:20260616T010203Z\nx-amz-security-token:session-token-example\n",
+    "host;x-amz-date;x-amz-security-token",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    FIXED_AMZ_DATE,
+    "20260616/us-east-1/sts/aws4_request",
+    sha256Hex(canonicalRequest),
+  ].join("\n");
+  const signature = hmacHex(signingKey("20260616", "us-east-1", "sts"), stringToSign);
+  assert.equal(signed.headers.get("x-amz-security-token"), SESSION_TOKEN);
+  assert.equal(
+    signed.headers.get("authorization"),
+    `AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/sts/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=${signature}`
   );
 });
 
@@ -494,6 +547,21 @@ test("doubleUrlEncode rejects non-S3 dot path segments", async () => {
       /non-S3 doubleUrlEncode URLs must not contain dot path segments/
     );
   }
+});
+
+test("doubleUrlEncode rejects non-S3 dot path segments before reading stream bodies", async () => {
+  const body = helloStream();
+  await assert.rejects(
+    () =>
+      executeApiRequest({
+        method: "POST",
+        url: `${EXECUTE_API_ENDPOINT}/prod/a/../b`,
+        body,
+        doubleUrlEncode: true,
+      }),
+    /non-S3 doubleUrlEncode URLs must not contain dot path segments/
+  );
+  await assertHelloStreamReadable(body);
 });
 
 test("doubleUrlEncode collapses repeated slashes in non-S3 canonical paths", async () => {

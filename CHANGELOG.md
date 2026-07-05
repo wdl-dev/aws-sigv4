@@ -12,6 +12,14 @@ SPDX-License-Identifier: Apache-2.0
   longer accepted before canonicalization.
 - Breaking: session tokens and credential scope components must now contain
   only printable ASCII characters.
+- Breaking: per-request `init.signing` overrides now read only own properties;
+  inherited signing option properties are ignored.
+- Breaking: string URLs must now include a non-empty host; empty-authority
+  forms such as `http:///path` are rejected instead of being reinterpreted by
+  the platform URL parser.
+- Changed: signed requests that require body materialization may return a
+  stable `Uint8Array` body for non-string body inputs such as `ArrayBuffer`,
+  `Blob`, `URLSearchParams`, and `ArrayBufferView`.
 - Fixed `SigV4Client` recovery after a transient secret hash digest rejection.
 - Documented query plus-sign behavior, clock-skew limits, and standard
   `TypeError` validation failures.

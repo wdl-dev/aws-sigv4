@@ -22,7 +22,10 @@ const CLIENT_SIGNING_OPTION_KEYS = new Set([
 ]);
 const UNSIGNABLE_HEADER_SNAPSHOTS = new WeakMap<
   object,
-  { source: Iterable<string> | undefined; value: string[] | undefined }
+  {
+    source: Iterable<string>;
+    result: { ok: true; value: string[] | undefined } | { ok: false; error: unknown };
+  }
 >();
 
 export function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOptions {
@@ -145,11 +148,19 @@ export function snapshotUnsignableHeaders(owner: object, source: unknown, name: 
   }
   const cached = UNSIGNABLE_HEADER_SNAPSHOTS.get(owner);
   if (cached && cached.source === source) {
-    return cached.value;
+    if (cached.result.ok) {
+      return cached.result.value;
+    }
+    throw cached.result.error;
   }
-  const value = normalizeUnsignableHeaders(source, name);
-  UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, value });
-  return value;
+  try {
+    const value = normalizeUnsignableHeaders(source, name);
+    UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, result: { ok: true, value } });
+    return value;
+  } catch (error) {
+    UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, result: { ok: false, error } });
+    throw error;
+  }
 }
 
 export function requireOptionsObject(value: unknown, message: string): void {

@@ -107,12 +107,15 @@ Signer validation failures are checked before stream bodies are consumed where
 possible; platform `RequestInit` validation errors may still be reported by the
 runtime when the final `Request` is constructed.
 
+`client.sign()` and `client.fetch()` accept `init.signing` to override
+per-request signing options such as `signingDate`, `service`, `region`,
+`unsignedPayload`, `unsignableHeaders`, or `doubleUrlEncode`; it cannot override
+credentials or `cache`. Only own properties on `init.signing` are read;
+inherited signing option properties are ignored.
+
 ### `client.sign(input, init)`
 
 Returns a signed `Request`. `input` may be a `Request`, string URL, or `URL`.
-`init.signing` can override per-request signing options such as `signingDate`,
-`service`, `region`, `unsignedPayload`, `unsignableHeaders`, or
-`doubleUrlEncode`; it cannot override credentials or `cache`.
 
 `URL` and `Request` inputs are already normalized by the platform URL parser.
 For raw paths that contain literal `.` or `..` path segments, use

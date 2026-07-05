@@ -10,12 +10,35 @@ const rootDir = resolve(import.meta.dirname, "..");
 const outDir = join(rootDir, "dist");
 const workDir = mkdtempSync(join(tmpdir(), "aws-sigv4-build-"));
 const tscBin = join(rootDir, "node_modules", "typescript", "bin", "tsc");
+const publicValueExports = ["SigV4Client", "signAwsRequest"];
+const publicTypeExports = [
+  "SigV4ClientOptions",
+  "SigV4RequestInit",
+  "SigV4RequestSigningOptions",
+  "SignAwsRequestOptions",
+  "SignedAwsRequest",
+];
+const publicValueExportLines = publicValueExports.map((name) => `export { ${name} };`).sort();
+const publicDeclarationExportLines = [
+  ...publicValueExportLines,
+  `export type { ${publicTypeExports.join(", ")}, };`,
+].sort();
+const publicDeclarationNames = [...publicValueExports, ...publicTypeExports].sort();
 
 // This is a package-specific bundler for this repo's TypeScript output, not a general-purpose bundler.
 try {
   rmSync(outDir, { force: true, recursive: true });
   mkdirSync(outDir, { recursive: true });
-  runTypeScript(["--project", "tsconfig.json", "--outDir", workDir, "--declaration", "true"]);
+  runTypeScript([
+    "--project",
+    "tsconfig.json",
+    "--outDir",
+    workDir,
+    "--declaration",
+    "true",
+    "--stripInternal",
+    "true",
+  ]);
 
   const outputJavaScript = join(outDir, "index.js");
   const outputDeclarations = join(outDir, "index.d.ts");
@@ -23,6 +46,7 @@ try {
   writeFileSync(outputDeclarations, bundleDeclarations(workDir));
 
   execFileSync(process.execPath, ["--check", outputJavaScript], { cwd: rootDir, stdio: "inherit" });
+  checkBundleSurface(outputJavaScript, outputDeclarations);
   checkDeclarations(outputDeclarations);
 } finally {
   rmSync(workDir, { force: true, recursive: true });
@@ -49,6 +73,14 @@ function checkDeclarations(file) {
     "--noEmit",
     file,
   ]);
+}
+
+function checkBundleSurface(javaScriptFile, declarationFile) {
+  const javaScript = readFileSync(javaScriptFile, "utf8");
+  const declarations = readFileSync(declarationFile, "utf8");
+  assertSameList(exportLines(javaScript), publicValueExportLines, "JavaScript exports");
+  assertSameList(exportLines(declarations), publicDeclarationExportLines, "declaration exports");
+  assertSameList(topLevelDeclarationNames(declarations), publicDeclarationNames, "declaration top-level names");
 }
 
 function bundleJavaScript(moduleDir) {
@@ -138,6 +170,32 @@ function entryExports(code, typeSyntax) {
     }
   }
   return exports;
+}
+
+function exportLines(code) {
+  return code
+    .split("\n")
+    .filter((line) => line.startsWith("export "))
+    .sort();
+}
+
+function topLevelDeclarationNames(code) {
+  const out = [];
+  const declaration =
+    /^(?:declare\s+)?(?:class|function|interface|type|const|let|var|enum|namespace)\s+([A-Za-z_$][\w$]*)/u;
+  for (const line of code.split("\n")) {
+    const match = declaration.exec(line);
+    if (match) {
+      out.push(match[1]);
+    }
+  }
+  return out.sort();
+}
+
+function assertSameList(actual, expected, label) {
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    throw new Error(`${label} changed: expected ${expected.join(" | ")}, got ${actual.join(" | ")}`);
+  }
 }
 
 function readModule(moduleDir, file) {
