@@ -19,7 +19,7 @@ const requestTimeoutMs = parseTimeoutMs(process.env.AWS_SIGV4_S3_REQUEST_TIMEOUT
 const existingBucket = process.env.AWS_SIGV4_S3_BUCKET || undefined;
 
 test(
-  "S3-compatible integration signs bucket and object operations",
+  "S3-compatible integration signs bucket, object, and reserved-key operations",
   { skip: enabled ? false : "set AWS_SIGV4_S3_INTEGRATION=1, s3mock, or aws", timeout: 240_000 },
   async () => {
     if (integration === "aws" && existingBucket === undefined) {

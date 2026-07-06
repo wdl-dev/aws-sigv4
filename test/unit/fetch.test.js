@@ -91,7 +91,7 @@ test("SigV4Client.fetch signs each retry attempt", async () => {
   assert.equal(typeof seen[1], "string");
 });
 
-test("SigV4Client.fetch rejects non-printable signed header values before retry body preparation", async () => {
+test("SigV4Client.fetch rejects non-printable signed header values before buffering retry bodies", async () => {
   await assertFetchRejectsBeforeBody(
     {},
     (body) => ({
@@ -242,7 +242,7 @@ test("SigV4Client.fetch respects client-level signAllHeaders during retry prepar
   );
 });
 
-test("SigV4Client.fetch rejects invalid signingDate before retry body preparation", async () => {
+test("SigV4Client.fetch rejects invalid signingDate before buffering retry bodies", async () => {
   await assertFetchRejectsBeforeBody(
     {},
     (body) => ({
@@ -256,7 +256,7 @@ test("SigV4Client.fetch rejects invalid signingDate before retry body preparatio
   );
 });
 
-test("SigV4Client.fetch captures Date signingDate before retry body preparation", async () => {
+test("SigV4Client.fetch captures Date signingDate before buffering retry bodies", async () => {
   let fetched;
   const signingDate = new Date("2026-06-16T01:02:03.000Z");
   class TimeChangingBlob extends Blob {
@@ -281,7 +281,7 @@ test("SigV4Client.fetch captures Date signingDate before retry body preparation"
   assert.equal(fetched.headers.get("x-amz-date"), FIXED_AMZ_DATE);
 });
 
-test("SigV4Client.fetch rejects invalid per-request service before retry body preparation", async () => {
+test("SigV4Client.fetch rejects invalid per-request service before buffering retry bodies", async () => {
   await assertFetchRejectsBeforeBody(
     {},
     (body) => ({
@@ -295,7 +295,7 @@ test("SigV4Client.fetch rejects invalid per-request service before retry body pr
   );
 });
 
-test("SigV4Client.fetch rejects empty payload hash headers before retry body preparation", async () => {
+test("SigV4Client.fetch rejects empty payload hash headers before buffering retry bodies", async () => {
   await assertFetchRejectsBeforeBody(
     {},
     (body) => ({
@@ -312,7 +312,7 @@ test("SigV4Client.fetch rejects empty payload hash headers before retry body pre
   );
 });
 
-test("SigV4Client.fetch rejects invalid UTF-16 URLs before retry body preparation", async () => {
+test("SigV4Client.fetch rejects invalid UTF-16 URLs before buffering retry bodies", async () => {
   await assertFetchRejectsBeforeBody(
     {},
     (body) => ({
@@ -327,7 +327,7 @@ test("SigV4Client.fetch rejects invalid UTF-16 URLs before retry body preparatio
   );
 });
 
-test("SigV4Client.fetch validates signed headers merged from Request inputs before retry body preparation", async () => {
+test("SigV4Client.fetch validates signed headers merged from Request inputs before buffering retry bodies", async () => {
   await assertFetchRejectsBeforeBody(
     {},
     (body) => {
@@ -356,7 +356,7 @@ test("SigV4Client.fetch validates signed headers merged from Request inputs befo
   );
 });
 
-test("SigV4Client.fetch matches sign() payload hash headers", async () => {
+test("SigV4Client.fetch uses the same payload hash headers as sign()", async () => {
   let fetched;
   const client = lambdaClient({
     fetch: async (request) => {
@@ -402,7 +402,7 @@ test("SigV4Client.fetch preserves one-shot headers after retry preparation", asy
   assert.match(fetched.headers.get("authorization") || "", /x-amz-meta-color/);
 });
 
-test("SigV4Client.fetch passes doubleUrlEncode through request preparation", async () => {
+test("SigV4Client.fetch honors doubleUrlEncode during signing", async () => {
   let fetched;
   const client = executeApiClient({
     doubleUrlEncode: true,

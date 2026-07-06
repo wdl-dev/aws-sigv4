@@ -86,7 +86,7 @@ test("SigV4Client.sign supports ReadableStream bodies", async () => {
   assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;x-amz-content-sha256;x-amz-date/);
 });
 
-test("hashed URLSearchParams bodies send the signed bytes", async () => {
+test("payload hashing sends stable URLSearchParams bytes", async () => {
   class UnstableParams extends URLSearchParams {
     calls = 0;
 
@@ -108,7 +108,7 @@ test("hashed URLSearchParams bodies send the signed bytes", async () => {
   );
 });
 
-test("hashed Blob bodies send the signed bytes", async () => {
+test("payload hashing sends stable Blob bytes", async () => {
   class UnstableBlob extends Blob {
     calls = 0;
 
@@ -220,7 +220,7 @@ test("non-S3 requests can explicitly use unsigned payload signing", async () => 
   );
 });
 
-test("generated content-type headers are signed before Request construction", async () => {
+test("generated content-type headers are included in signed headers", async () => {
   const client = lambdaClient();
   const params = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
     method: "POST",

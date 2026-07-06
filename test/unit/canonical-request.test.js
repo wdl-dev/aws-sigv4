@@ -119,7 +119,7 @@ test("AWS SigV4 testsuite vectors match the published signatures", async () => {
   }
 });
 
-test("S3 signing supports unsigned payload golden vectors", async () => {
+test("S3 unsigned payload golden vectors match expected signatures", async () => {
   for (const fixture of S3_FIXTURES) {
     const client = s3Client({
       sessionToken: fixture.sessionToken,
@@ -152,7 +152,7 @@ test("AWS S3 official header auth examples match the published signatures", asyn
   }
 });
 
-test("Lambda MicroVMs REST-JSON requests sign with service=lambda and real payload hash", async () => {
+test("Lambda REST-JSON requests sign with service=lambda and a real payload hash", async () => {
   const body = JSON.stringify({
     imageIdentifier: "arn:aws:lambda:ap-northeast-1:123456789012:microvm-image/demo:1",
     clientToken: "session-001",
