@@ -149,6 +149,19 @@ test("signingDate accepts ISO-8601 strings", async () => {
   });
   assert.equal(basicOffsetSigned.headers.get("x-amz-date"), FIXED_AMZ_DATE);
   assert.equal(basicOffsetSigned.headers.get("authorization"), dateSigned.headers.get("authorization"));
+
+  for (const [signingDate, expectedAmzDate] of [
+    ["2024-02-29T12:34:56Z", "20240229T123456Z"],
+    ["0999-01-02T03:04:05Z", "09990102T030405Z"],
+    ["2026-06-16T01:02:03.987Z", FIXED_AMZ_DATE],
+  ]) {
+    const signed = await lambdaRequest({
+      method: "GET",
+      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      signingDate,
+    });
+    assert.equal(signed.headers.get("x-amz-date"), expectedAmzDate, signingDate);
+  }
 });
 
 test("signingDate rejects ISO-8601 strings without timezone", async () => {
@@ -658,6 +671,30 @@ test("SigV4Client rejects credential and cache overrides in init.signing", async
         },
       }),
     /init\.signing\.cache cannot override/
+  );
+  await assert.rejects(
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          ["secretAccessKey\n\u001b[31m"]: "SECRET2",
+        },
+      }),
+    (err) => {
+      assert.equal(err instanceof TypeError, true);
+      assert.match(err.message, /init\.signing option cannot override/);
+      assert.equal(err.message.includes("\n"), false);
+      assert.equal(err.message.includes("\u001b"), false);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: {
+          "": true,
+        },
+      }),
+    /init\.signing option cannot override/
   );
 });
 

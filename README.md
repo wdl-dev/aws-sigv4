@@ -131,7 +131,9 @@ signing headers that your `fetch` implementation or HTTP transport may rewrite.
 `unsignableHeaders` adds names to the default exclusion set, but mandatory SigV4
 headers such as `host`,
 `x-amz-content-sha256`, `x-amz-date`, and `x-amz-security-token` are always
-signed when present.
+signed when present. `host` is derived from the signed URL; any caller-provided
+`Host` header is replaced before signing, and `client.fetch()` sends the
+replaced value.
 
 `client.sign()` and `client.fetch()` accept `init.signing` to override
 per-request signing options such as `signingDate`, `service`, `region`,
@@ -187,6 +189,8 @@ only around requests that are known to be safe.
 Lower-level helper that returns `{ method, url, headers, body }` without sending
 the request. Use this when another HTTP client owns transport, or when S3 object
 keys need raw string URL paths that web `Request` would normalize.
+When a body is materialized for hashing, the returned `body` may be a
+`Uint8Array` containing the signed bytes rather than the original body object.
 It accepts the same signing options as `SigV4Client`, including
 `doubleUrlEncode`.
 It preserves string URL paths exactly. For S3, pass object key paths in

@@ -64,11 +64,30 @@ const AWS_SIGV4_TESTSUITE_FIXTURES = [
       "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=07ef7494c76fa4850883e2b006601f940f8a34d404d0cfa977f52a65bbf5f24f",
   },
   {
+    name: "normalize-path/get-special-character",
+    method: "GET",
+    url: "https://example.amazonaws.com/example/$delete",
+    doubleUrlEncode: true,
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=a853c9b21b528b19643d00910d35b83a10c366a10833ceefb45edd6c80e40f27",
+  },
+  {
     name: "get-vanilla-query-order-key-case",
     method: "GET",
     url: "https://example.amazonaws.com/?Param2=value2&Param1=value1",
     expectedAuthorization:
       "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500",
+  },
+  {
+    name: "get-header-value-trim",
+    method: "GET",
+    url: "https://example.amazonaws.com/",
+    headers: {
+      "My-Header1": " value1",
+      "My-Header2": '"a   b   c"',
+    },
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;my-header1;my-header2;x-amz-date, Signature=acc3ed3afb60bb290fc8d2dd0098b9911fcaa05412b367055dee359757a9c736",
   },
   {
     name: "post-sts-header-before",
@@ -90,6 +109,8 @@ test("AWS SigV4 testsuite vectors match the published signatures", async () => {
       region: "us-east-1",
       method: fixture.method,
       url: fixture.url,
+      headers: fixture.headers,
+      doubleUrlEncode: fixture.doubleUrlEncode,
       signingDate: "20150830T123600Z",
     });
     assert.equal(signed.headers.get("authorization"), fixture.expectedAuthorization, fixture.name);
@@ -485,6 +506,19 @@ test("string URL signing includes non-default ports in host", async () => {
   assert.equal(
     signed.headers.get("authorization"),
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=5f9d64da8d19fcc1ef0e28a8dffb9a120f0dbfba820e5303b76551357d42785e"
+  );
+});
+
+test("HTTP URLs are signed with the URL host", async () => {
+  const signed = await lambdaRequest({
+    method: "GET",
+    url: "http://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
+  });
+  assert.equal(signed.url, "http://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms");
+  assert.equal(signed.headers.get("host"), "lambda.ap-northeast-1.amazonaws.com");
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=2d7bf3729352388cc6717c97bbd11201eb3cd082231c420ac07bfa318cfb2482"
   );
 });
 

@@ -32,7 +32,7 @@ export function normalizeClientSigningOptions(options: unknown): SigV4RequestSig
   }
   for (const key of Object.keys(options)) {
     if (!CLIENT_SIGNING_OPTION_KEYS.has(key)) {
-      throw new TypeError(`init.signing.${key} cannot override client credentials or transport options`);
+      throw new TypeError(`${signingOptionDisplayName(key)} cannot override client credentials or transport options`);
     }
   }
   const record = options as SigV4RequestSigningOptions & Record<string, unknown>;
@@ -56,6 +56,19 @@ export function normalizeClientSigningOptions(options: unknown): SigV4RequestSig
   setOrDelete(normalized, "unsignableHeaders", unsignableHeaders);
   setOrDelete(normalized, "doubleUrlEncode", doubleUrlEncode);
   return normalized;
+}
+
+function signingOptionDisplayName(key: string): string {
+  if (key.length === 0) {
+    return "init.signing option";
+  }
+  for (let index = 0; index < key.length; index += 1) {
+    const codeUnit = key.charCodeAt(index);
+    if (codeUnit < 0x20 || codeUnit > 0x7e) {
+      return "init.signing option";
+    }
+  }
+  return `init.signing.${key}`;
 }
 
 export function validateCredentialOptions(

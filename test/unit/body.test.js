@@ -288,6 +288,24 @@ test("payload hashing reuses Uint8Array bodies without copying", async () => {
   assert.equal(digestInputs.includes(body), true);
 });
 
+test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () => {
+  const body = new TextEncoder().encode('{"ok":true}').buffer;
+  const signed = await lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    headers: {
+      "content-type": "application/json",
+    },
+    body,
+  });
+  assert.ok(signed.body instanceof Uint8Array);
+  assert.equal(signed.body.buffer, body);
+  assert.equal(
+    signed.headers.get("x-amz-content-sha256"),
+    "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93"
+  );
+});
+
 test("signed S3 payloads send x-amz-content-sha256", async () => {
   const signed = await s3Request({
     method: "PUT",

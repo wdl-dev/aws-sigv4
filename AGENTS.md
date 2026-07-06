@@ -10,6 +10,8 @@ Signature Version 4 signer for web-standard runtimes, with focused coverage for
 JSON AWS APIs and S3-compatible object storage. Keep the package narrow: HTTP
 request signing only, with no credential providers, AWS SDK command wrappers,
 endpoint discovery, presigned URLs, waiters, or paginators.
+The one transport helper in scope is `SigV4Client.fetch()`, which signs a web
+`Request` and may retry idempotent requests when explicitly configured.
 
 Use Node.js 24 or newer. The TypeScript target is ES2025.
 
