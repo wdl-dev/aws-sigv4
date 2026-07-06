@@ -20,6 +20,31 @@ test("external signing key cache keys do not expose the secret access key", asyn
   }
 });
 
+test("external signing key caches reuse entries for matching credential scopes", async () => {
+  let cacheWrites = 0;
+  const cache = new (class extends Map {
+    set(key, value) {
+      cacheWrites += 1;
+      return super.set(key, value);
+    }
+  })();
+
+  await lambdaRequest({
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    cache,
+  });
+  assert.equal(cacheWrites, 1);
+
+  await lambdaRequest({
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms/second`,
+    cache,
+  });
+  assert.equal(cacheWrites, 1);
+  assert.equal(cache.size, 1);
+});
+
 test("SigV4Client does not cache rejected secret hash promises", async () => {
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   let digestCalls = 0;
@@ -47,6 +72,47 @@ test("SigV4Client does not cache rejected secret hash promises", async () => {
       "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=2d7bf3729352388cc6717c97bbd11201eb3cd082231c420ac07bfa318cfb2482"
     );
     assert.ok(digestCalls > 1);
+  } finally {
+    crypto.subtle.digest = originalDigest;
+  }
+});
+
+test("SigV4Client shares in-flight secret hash promises", async () => {
+  const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+  const client = lambdaClient();
+  let releaseSecretDigest;
+  let secretDigestCalls = 0;
+  const secretDigestPromise = new Promise((resolve, reject) => {
+    releaseSecretDigest = async () => {
+      try {
+        resolve(await originalDigest("SHA-256", new TextEncoder().encode(SECRET_ACCESS_KEY)));
+      } catch (err) {
+        reject(err);
+      }
+    };
+  });
+  try {
+    crypto.subtle.digest = (algorithm, data) => {
+      if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
+        secretDigestCalls += 1;
+        return secretDigestPromise;
+      }
+      return originalDigest(algorithm, data);
+    };
+
+    const first = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(secretDigestCalls, 1);
+    const second = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(secretDigestCalls, 1);
+    await releaseSecretDigest();
+
+    const [firstSigned, secondSigned] = await Promise.all([first, second]);
+    assert.equal(secretDigestCalls, 1);
+    assert.equal(firstSigned.headers.get("authorization"), secondSigned.headers.get("authorization"));
   } finally {
     crypto.subtle.digest = originalDigest;
   }
@@ -86,3 +152,10 @@ test("SigV4Client computes the secret hash lazily", () => {
     crypto.subtle.digest = originalDigest;
   }
 });
+
+function bufferSourceText(data) {
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+}

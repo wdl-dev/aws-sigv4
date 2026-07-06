@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { CONTENT_TYPE_HEADER, textEncoder } from "./constants.js";
+import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, textEncoder } from "./constants.js";
+import { sha256Hex } from "./crypto.js";
 
 export interface PreparedBody {
   body: BodyInit | null | undefined;
@@ -77,6 +78,28 @@ async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
     return new Uint8Array(await body.arrayBuffer());
   }
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
+}
+
+export function shouldHashPayload(
+  body: BodyInit | null | undefined,
+  headers: Headers,
+  unsignedPayload: boolean
+): boolean {
+  return body !== undefined && body !== null && !unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER);
+}
+
+export async function prepareHashedBody(
+  body: BodyInit | null | undefined,
+  headers: Headers,
+  unsignedPayload: boolean,
+  materialize = false
+): Promise<PreparedBody> {
+  const hashPayload = shouldHashPayload(body, headers, unsignedPayload);
+  const preparedBody = await prepareBody(body, headers, materialize || hashPayload);
+  if (hashPayload) {
+    headers.set(AMZ_CONTENT_SHA256_HEADER, await sha256Hex(preparedBody.bytes));
+  }
+  return preparedBody;
 }
 
 function stableMaterializedBody(body: BodyInit, bytes: Uint8Array): BodyInit {

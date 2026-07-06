@@ -93,7 +93,14 @@ body by default. `retries` defaults to `0`.
 
 If you pass a shared `cache`, treat it as sensitive process-local material. Cache
 keys do not contain the raw secret access key, but cache values are derived
-SigV4 signing keys.
+SigV4 signing keys. `SigV4Client` creates an internal `Map` when `cache` is not
+provided, and signing key caches do not evict entries automatically. Long-running
+processes that sign many date, region, or service scopes should provide a cache
+and manage eviction at the application boundary.
+
+`SigV4Client` keeps `secretAccessKey` for the client lifetime so it can sign
+future requests. For temporary or rotated credentials, create a new client and
+release references to the old one.
 
 This package does not discover or compensate for service clock skew; pass
 `signingDate` when the signing time must be controlled. Validation and request

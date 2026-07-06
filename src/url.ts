@@ -125,6 +125,17 @@ function encodeRfc3986(value: string): string {
   return value.replace(RFC3986_EXTRA_ESCAPE_RE, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+function strictEncode(value: string): string {
+  try {
+    return encodeRfc3986(encodeURIComponent(value));
+  } catch (err) {
+    if (err instanceof URIError) {
+      throw new TypeError("url must not contain invalid UTF-16");
+    }
+    throw err;
+  }
+}
+
 function canonicalSingleEncodedPathname(pathname: string): string {
   let out = "";
   for (let index = 0; index < pathname.length;) {
@@ -144,28 +155,14 @@ function canonicalSingleEncodedPathname(pathname: string): string {
       break;
     }
     const charValue = String.fromCodePoint(codePoint);
-    try {
-      out += encodeRfc3986(encodeURIComponent(charValue));
-    } catch (err) {
-      if (err instanceof URIError) {
-        throw new TypeError("url must not contain invalid UTF-16");
-      }
-      throw err;
-    }
+    out += strictEncode(charValue);
     index += charValue.length;
   }
   return out;
 }
 
 function canonicalDoubleEncodedPathname(pathname: string): string {
-  try {
-    return encodeRfc3986(encodeURIComponent(pathname)).replace(/%2F/gu, "/");
-  } catch (err) {
-    if (err instanceof URIError) {
-      throw new TypeError("url must not contain invalid UTF-16");
-    }
-    throw err;
-  }
+  return strictEncode(pathname).replace(/%2F/gu, "/");
 }
 
 function collapsePathSlashes(pathname: string): string {
@@ -188,14 +185,7 @@ function canonicalUriComponent(value: string): string {
       break;
     }
     const charValue = String.fromCodePoint(codePoint);
-    try {
-      out += encodeRfc3986(encodeURIComponent(charValue));
-    } catch (err) {
-      if (err instanceof URIError) {
-        throw new TypeError("url must not contain invalid UTF-16");
-      }
-      throw err;
-    }
+    out += strictEncode(charValue);
     index += charValue.length;
   }
   return out;

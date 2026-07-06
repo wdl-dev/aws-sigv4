@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareBody } from "./body.js";
+import { prepareHashedBody, shouldHashPayload } from "./body.js";
 import { AMZ_CONTENT_SHA256_HEADER } from "./constants.js";
 import { sha256Hex } from "./crypto.js";
 import { signerOverwrittenHeaderNames, validateSignedHeaderValues } from "./headers.js";
@@ -9,20 +9,17 @@ import {
   normalizeClientSigningOptions,
   normalizeUnsignableHeaders,
   optionalBoolean,
-  requireCredentialComponent,
   requireNonNegativeFiniteNumber,
   requireNonNegativeInteger,
-  requireOptionsObject,
-  requireSecretAccessKey,
   requireSigningCache,
-  validateSessionToken,
+  resolveUnsignedPayload,
+  validateCredentialOptions,
 } from "./options.js";
 import {
   assertParsedRequestCanRepresentSignedUrl,
   assertRequestCanRepresentSignedUrl,
   bindFetch,
   defaultMethod,
-  hasRequestBody,
   isIdempotentMethod,
   mergeDefinedRequestInit,
   mergeHeaders,
@@ -69,14 +66,7 @@ export class SigV4Client {
   private readonly fetchFn: typeof fetch;
 
   constructor(options: SigV4ClientOptions) {
-    requireOptionsObject(options, "SigV4Client options are required");
-    requireCredentialComponent(options.accessKeyId, "accessKeyId");
-    requireSecretAccessKey(options.secretAccessKey);
-    requireCredentialComponent(options.service, "service");
-    requireCredentialComponent(options.region, "region");
-    if (options.sessionToken !== undefined) {
-      validateSessionToken(options.sessionToken);
-    }
+    validateCredentialOptions(options, "SigV4Client options are required");
     this.accessKeyId = options.accessKeyId;
     this.secretAccessKey = options.secretAccessKey;
     this.sessionToken = options.sessionToken;
@@ -250,7 +240,10 @@ async function reusableRequestInit(init: SigV4RequestInit, options: ReusableRequ
   const headers = new Headers(init.headers || {});
   rejectEmptyHeader(headers, AMZ_CONTENT_SHA256_HEADER);
   const service = init.signing?.service ?? options.defaultService;
-  const unsignedPayload = init.signing?.unsignedPayload ?? options.defaultUnsignedPayload ?? service === "s3";
+  const unsignedPayload = resolveUnsignedPayload(
+    init.signing?.unsignedPayload ?? options.defaultUnsignedPayload,
+    service
+  );
   const unsignableHeaders = (init.signing?.unsignableHeaders ?? options.defaultUnsignableHeaders) as
     readonly string[] | undefined;
   validateSignedHeaderValues(headers, {
@@ -259,14 +252,11 @@ async function reusableRequestInit(init: SigV4RequestInit, options: ReusableRequ
     overwrittenHeaderNames: signerOverwrittenHeaderNames(options.hasClientSessionToken),
   });
   const materializeBody = options.replayBody && (init.body instanceof FormData || init.body instanceof ReadableStream);
-  const hashPayload = hasRequestBody(init.body) && !unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER);
+  const hashPayload = shouldHashPayload(init.body, headers, unsignedPayload);
   if (!materializeBody && !hashPayload) {
     return init;
   }
-  const body = await prepareBody(init.body, headers, materializeBody || hashPayload);
-  if (hashPayload) {
-    headers.set(AMZ_CONTENT_SHA256_HEADER, await sha256Hex(body.bytes));
-  }
+  const body = await prepareHashedBody(init.body, headers, unsignedPayload, materializeBody);
   const out: SigV4RequestInit = {
     ...init,
     headers,
