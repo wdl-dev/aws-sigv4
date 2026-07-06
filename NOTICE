@@ -2,3 +2,7 @@
 Copyright 2026 Sean Consulting OÜ
 
 Licensed under the Apache License, Version 2.0.
+
+This repository's tests include selected AWS Signature Version 4 Test Suite
+vectors.
+Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.

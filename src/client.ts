@@ -33,7 +33,7 @@ import {
 } from "./request.js";
 import { abortReason, cancelResponseBody, isAbortError, sleep } from "./retry.js";
 import { signAwsRequestInternal } from "./signer.js";
-import type { SigV4ClientOptions, SigV4RequestInit } from "./types.js";
+import type { SigV4ClientOptions, SigV4RequestInit, SigningKeyCache } from "./types.js";
 import { parseRequestUrl } from "./url.js";
 
 interface ReusableRequestOptions {
@@ -45,6 +45,8 @@ interface ReusableRequestOptions {
   replayBody: boolean;
 }
 
+const MAX_RETRY_DELAY_MS = 2_147_483_647;
+
 /**
  * Small SigV4 client with `sign()` and `fetch()` helpers.
  */
@@ -55,7 +57,7 @@ export class SigV4Client {
   private readonly sessionToken: string | undefined;
   private readonly service: string;
   private readonly region: string;
-  private readonly cache: Map<string, ArrayBuffer>;
+  private readonly cache: SigningKeyCache;
   private readonly retries: number;
   private readonly initialRetryDelayMs: number;
   private readonly maxRetryDelayMs: number;
@@ -213,7 +215,7 @@ export class SigV4Client {
   }
 
   private retryDelayMs(attempt: number): number {
-    return Math.min(this.maxRetryDelayMs, this.initialRetryDelayMs * 2 ** attempt);
+    return Math.min(MAX_RETRY_DELAY_MS, this.maxRetryDelayMs, this.initialRetryDelayMs * 2 ** attempt);
   }
 }
 
@@ -254,7 +256,10 @@ async function reusableRequestInit(init: SigV4RequestInit, options: ReusableRequ
   const materializeBody = options.replayBody && (init.body instanceof FormData || init.body instanceof ReadableStream);
   const hashPayload = shouldHashPayload(init.body, headers, unsignedPayload);
   if (!materializeBody && !hashPayload) {
-    return init;
+    return {
+      ...init,
+      headers,
+    };
   }
   const body = await prepareHashedBody(init.body, headers, unsignedPayload, materializeBody);
   const out: SigV4RequestInit = {

@@ -19,6 +19,7 @@ export const MANDATORY_SIGNED_HEADERS = new Set([
 
 export const DEFAULT_UNSIGNABLE_HEADERS = new Set([
   AUTHORIZATION_HEADER,
+  "accept-encoding",
   "connection",
   "content-length",
   "expect",

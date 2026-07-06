@@ -7,7 +7,7 @@ export interface SigV4ClientOptions {
   sessionToken?: string | undefined;
   service: string;
   region: string;
-  cache?: Map<string, ArrayBuffer> | undefined;
+  cache?: SigningKeyCache | undefined;
   retries?: number | undefined;
   initialRetryDelayMs?: number | undefined;
   maxRetryDelayMs?: number | undefined;
@@ -28,12 +28,17 @@ export interface SignAwsRequestOptions {
   url: string | URL;
   headers?: HeadersInit | undefined;
   body?: BodyInit | null | undefined;
-  cache?: Map<string, ArrayBuffer> | undefined;
+  cache?: SigningKeyCache | undefined;
   signingDate?: string | Date | undefined;
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
   unsignableHeaders?: Iterable<string> | undefined;
   doubleUrlEncode?: boolean | undefined;
+}
+
+export interface SigningKeyCache {
+  get(key: string): ArrayBuffer | undefined;
+  set(key: string, value: ArrayBuffer): unknown;
 }
 
 export type SigV4RequestInit = RequestInit & {

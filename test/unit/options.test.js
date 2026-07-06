@@ -15,6 +15,7 @@ import {
   SESSION_TOKEN,
   lambdaClient,
   lambdaRequest,
+  s3Client,
   s3Request,
 } from "./helpers.js";
 
@@ -75,6 +76,7 @@ test("default signing excludes hop-by-hop headers", async () => {
     method: "GET",
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
     headers: {
+      "accept-encoding": "gzip",
       connection: "keep-alive",
       "content-length": "123",
       expect: "100-continue",
@@ -138,6 +140,43 @@ test("sign(Request, init) merges request headers with init headers", async () =>
   assert.match(
     signed.headers.get("authorization") || "",
     /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-base;x-extra/
+  );
+});
+
+test("SigV4Client uses per-request region overrides", async () => {
+  const client = lambdaClient({ region: "us-east-1" });
+  const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: {
+      region: "ap-northeast-1",
+      signingDate: FIXED_AMZ_DATE,
+    },
+  });
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=2d7bf3729352388cc6717c97bbd11201eb3cd082231c420ac07bfa318cfb2482"
+  );
+});
+
+test("SigV4Client uses per-request service overrides for signing and payload defaults", async () => {
+  const client = s3Client({ region: "ap-northeast-1" });
+  const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: "{}",
+    signing: {
+      service: "lambda",
+      signingDate: FIXED_AMZ_DATE,
+    },
+  });
+  assert.equal(
+    signed.headers.get("x-amz-content-sha256"),
+    "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  );
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=de89cd04f1fd244964d976e79a614522733e20fdc2dbebc51bdcb56714f50fac"
   );
 });
 

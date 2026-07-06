@@ -33,7 +33,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["*.js", "test/**/*.js"],
+    files: ["*.js", "scripts/**/*.mjs", "test/**/*.js"],
     extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2025,

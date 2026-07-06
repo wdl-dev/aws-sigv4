@@ -3,7 +3,7 @@
 
 import { AUTH_PARAM_SEPARATOR_RE, CONTROL_CHAR_RE, WHITESPACE_RE } from "./constants.js";
 import { optionalAmzDate } from "./date.js";
-import type { SigV4RequestSigningOptions } from "./types.js";
+import type { SigV4RequestSigningOptions, SigningKeyCache } from "./types.js";
 import { rejectNonPrintableAscii } from "./validation.js";
 
 const CLIENT_SIGNING_OPTION_KEYS = new Set([
@@ -188,7 +188,7 @@ export function requireDefinedOption(value: unknown, name: string): void {
   }
 }
 
-export function requireSigningCache(value: unknown, name: string): Map<string, ArrayBuffer> | undefined {
+export function requireSigningCache(value: unknown, name: string): SigningKeyCache | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -269,7 +269,7 @@ function isIterable(value: unknown): value is Iterable<string> {
   );
 }
 
-function isSigningCache(value: unknown): value is Map<string, ArrayBuffer> {
+function isSigningCache(value: unknown): value is SigningKeyCache {
   if (value === null || typeof value !== "object" || value instanceof WeakMap) {
     return false;
   }

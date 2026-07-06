@@ -8,5 +8,6 @@ export type {
   SigV4RequestInit,
   SigV4RequestSigningOptions,
   SignAwsRequestOptions,
+  SigningKeyCache,
   SignedAwsRequest,
 } from "./types.js";

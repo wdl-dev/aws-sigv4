@@ -20,10 +20,20 @@ SPDX-License-Identifier: Apache-2.0
 - Changed: signed requests that require body materialization may return a
   stable `Uint8Array` body for non-string body inputs such as `ArrayBuffer`,
   `Blob`, `URLSearchParams`, and `ArrayBufferView`.
+- Changed: `accept-encoding` is excluded from the default signed header set
+  because fetch implementations and HTTP transports may rewrite it.
+- Changed: the public cache type now matches the runtime `Map`-like contract.
 - Fixed `SigV4Client` recovery after a transient secret hash digest rejection.
+- Fixed `SigV4Client.fetch()` retry preparation for one-shot header iterators.
+- Fixed retry delay handling so very large delay settings are clamped to the
+  platform timeout limit instead of turning into immediate retry loops.
 - Documented query plus-sign behavior, clock-skew limits, and standard
   `TypeError` validation failures.
 - Added canonical query percent-encoding and non-default port coverage.
+- Added selected AWS SigV4 testsuite vectors for canonical URI, canonical
+  query, and session-token signing behavior.
+- Added S3-compatible integration coverage for object keys containing literal
+  URI-reserved characters.
 - Refactored source and unit tests into focused modules while keeping the
   published package as a single-file `dist` entry.
 

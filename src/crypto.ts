@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AWS_REQUEST, LOWER_HEX, textEncoder } from "./constants.js";
+import type { SigningKeyCache } from "./types.js";
 
 interface SignatureOptions {
   secretAccessKey: string;
@@ -10,7 +11,7 @@ interface SignatureOptions {
   region: string;
   service: string;
   stringToSign: string;
-  cache?: Map<string, ArrayBuffer> | undefined;
+  cache?: SigningKeyCache | undefined;
 }
 
 export async function signatureHex(options: SignatureOptions): Promise<string> {

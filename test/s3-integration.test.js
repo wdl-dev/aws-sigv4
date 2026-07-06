@@ -29,10 +29,17 @@ test(
     const bucket = existingBucket ?? `aws-sigv4-${runId}`;
     const keyPrefix = existingBucket === undefined ? "" : `runs/${runId}/`;
     const keySuffix = "sigv4.txt";
-    const key = `${keyPrefix}objects/hello+${keySuffix}`;
-    const objectUrl = `${endpoint}/${bucket}/${encodeS3KeyPath(key)}`;
-    const listPrefix = key.slice(0, key.length - keySuffix.length);
-    const body = `hello from aws-sigv4 ${randomUUID()}`;
+    const keys = [
+      `${keyPrefix}objects/hello+${keySuffix}`,
+      `${keyPrefix}objects/report(final).txt`,
+      `${keyPrefix}objects/a:b,c!.txt`,
+    ];
+    const objects = keys.map((key) => ({
+      key,
+      url: `${endpoint}/${bucket}/${encodeS3KeyPath(key)}`,
+      body: `hello from aws-sigv4 ${randomUUID()}`,
+    }));
+    const listPrefix = `${keyPrefix}objects/`;
     const s3 = new SigV4Client({
       accessKeyId,
       secretAccessKey,
@@ -42,7 +49,7 @@ test(
       retries: 1,
     });
     let bucketCreated = false;
-    let objectCreated = false;
+    const objectUrlsToCleanup = [];
     let primaryError;
     const cleanupErrors = [];
 
@@ -58,27 +65,29 @@ test(
         bucketCreated = true;
       }
 
-      await expectOk(
-        s3.fetch(objectUrl, {
-          method: "PUT",
-          headers: {
-            "content-type": "text/plain",
-          },
-          body,
-          signal: requestSignal(),
-        }),
-        "put object"
-      );
-      objectCreated = true;
+      for (const object of objects) {
+        objectUrlsToCleanup.push(object.url);
+        await expectOk(
+          s3.fetch(object.url, {
+            method: "PUT",
+            headers: {
+              "content-type": "text/plain",
+            },
+            body: object.body,
+            signal: requestSignal(),
+          }),
+          `put object ${object.key}`
+        );
 
-      const getObject = await expectOk(
-        s3.fetch(objectUrl, {
-          method: "GET",
-          signal: requestSignal(),
-        }),
-        "get object"
-      );
-      assert.equal(await getObject.text(), body);
+        const getObject = await expectOk(
+          s3.fetch(object.url, {
+            method: "GET",
+            signal: requestSignal(),
+          }),
+          `get object ${object.key}`
+        );
+        assert.equal(await getObject.text(), object.body);
+      }
 
       const listBucket = await expectOk(
         s3.fetch(`${endpoint}/${bucket}?${new URLSearchParams({ "list-type": "2", prefix: listPrefix }).toString()}`, {
@@ -90,13 +99,15 @@ test(
       const listText = await listBucket.text();
       assert.match(listText, /<ListBucketResult\b/);
       assert.match(listText, new RegExp(`<Prefix>${escapeRegExp(listPrefix)}</Prefix>`));
-      assert.match(listText, /<KeyCount>1<\/KeyCount>/);
-      assert.equal((listText.match(/<Contents>/gu) || []).length, 1);
-      assert.match(listText, new RegExp(`<Key>${escapeRegExp(key)}</Key>`));
+      assert.match(listText, new RegExp(`<KeyCount>${objects.length}</KeyCount>`));
+      assert.equal((listText.match(/<Contents>/gu) || []).length, objects.length);
+      for (const object of objects) {
+        assert.match(listText, new RegExp(`<Key>${escapeRegExp(object.key)}</Key>`));
+      }
     } catch (err) {
       primaryError = err;
     } finally {
-      if (objectCreated) {
+      for (const objectUrl of objectUrlsToCleanup) {
         await collectCleanupError(cleanupErrors, () =>
           expectOk(s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }), "delete object")
         );

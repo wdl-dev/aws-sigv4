@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
+// SPDX-FileCopyrightText: 2019 Amazon.com, Inc. or its affiliates
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
@@ -43,6 +44,59 @@ function hmacHex(key, value) {
 function signingKey(date, region, service) {
   return hmacBytes(hmacBytes(hmacBytes(hmacBytes(`AWS4${SECRET_ACCESS_KEY}`, date), region), service), "aws4_request");
 }
+
+const AWS_SIGV4_TESTSUITE_SESSION_TOKEN =
+  "AQoDYXdzEPT//////////wEXAMPLEtc764bNrC9SAPBSM22wDOk4x4HIZ8j4FZTwdQWLWsKWHGBuFqwAeMicRXmxfpSPfIeoIYRqTflfKD8YUuwthAx7mSEI/qkPpKPi/kMcGdQrmGdeehM4IC1NtBmUpp2wUE8phUZampKsburEDy0KPkyQDYwT7WZ0wq5VSXDvp75YU9HFvlRd8Tx6q6fE8YQcHNVXAkiY9q6d+xo0rKwT38xVqr7ZD0u0iPPkUL64lIZbqBAz+scqKmlzm8FDrypNC9Yjc8fPOLn9FX9KSYvKTr4rvx3iSIlTJabIQwj2ICCR/oLxBA==";
+
+const AWS_SIGV4_TESTSUITE_FIXTURES = [
+  {
+    name: "get-vanilla",
+    method: "GET",
+    url: "https://example.amazonaws.com/",
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
+  },
+  {
+    name: "get-unreserved",
+    method: "GET",
+    url: "https://example.amazonaws.com/-._~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=07ef7494c76fa4850883e2b006601f940f8a34d404d0cfa977f52a65bbf5f24f",
+  },
+  {
+    name: "get-vanilla-query-order-key-case",
+    method: "GET",
+    url: "https://example.amazonaws.com/?Param2=value2&Param1=value1",
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500",
+  },
+  {
+    name: "post-sts-header-before",
+    method: "POST",
+    url: "https://example.amazonaws.com/",
+    sessionToken: AWS_SIGV4_TESTSUITE_SESSION_TOKEN,
+    expectedAuthorization:
+      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=85d96828115b5dc0cfc3bd16ad9e210dd772bbebba041836c64533a82be05ead",
+  },
+];
+
+test("AWS SigV4 testsuite vectors match the published signatures", async () => {
+  for (const fixture of AWS_SIGV4_TESTSUITE_FIXTURES) {
+    const signed = await signAwsRequest({
+      accessKeyId: ACCESS_KEY_ID,
+      secretAccessKey: SECRET_ACCESS_KEY,
+      sessionToken: fixture.sessionToken,
+      service: "service",
+      region: "us-east-1",
+      method: fixture.method,
+      url: fixture.url,
+      signingDate: "20150830T123600Z",
+    });
+    assert.equal(signed.headers.get("authorization"), fixture.expectedAuthorization, fixture.name);
+    assert.equal(signed.headers.get("x-amz-date"), "20150830T123600Z", fixture.name);
+    assert.equal(signed.headers.get("x-amz-security-token"), fixture.sessionToken ?? null, fixture.name);
+  }
+});
 
 test("S3 signing supports unsigned payload golden vectors", async () => {
   for (const fixture of S3_FIXTURES) {

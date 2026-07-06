@@ -422,6 +422,34 @@ test("SigV4Client.fetch caps exponential retry delay", async () => {
   }
 });
 
+test("SigV4Client.fetch clamps retry delays to the platform timeout limit", async () => {
+  const originalRandom = Math.random;
+  const originalSetTimeout = globalThis.setTimeout;
+  const delays = [];
+  try {
+    Math.random = () => 1;
+    globalThis.setTimeout = (callback, delay) => {
+      delays.push(delay);
+      callback();
+      return 0;
+    };
+    const client = lambdaClient({
+      retries: 1,
+      initialRetryDelayMs: Number.MAX_SAFE_INTEGER,
+      maxRetryDelayMs: Number.MAX_SAFE_INTEGER,
+      fetch: async () => new Response("retry", { status: 500 }),
+    });
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(delays, [2_147_483_647]);
+  } finally {
+    Math.random = originalRandom;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test("SigV4Client rejects negative retries", () => {
   assert.throws(
     () =>

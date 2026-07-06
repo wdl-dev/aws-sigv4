@@ -203,6 +203,23 @@ test("explicit x-amz-content-sha256 controls the canonical payload hash", async 
   );
 });
 
+test("non-S3 requests can explicitly use unsigned payload signing", async () => {
+  const signed = await lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    headers: {
+      "content-type": "application/json",
+    },
+    body: "{}",
+    unsignedPayload: true,
+  });
+  assert.equal(signed.headers.get("x-amz-content-sha256"), "UNSIGNED-PAYLOAD");
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=cb3997d7146ebb9140d2a079b18124048546a81665d3e85acb1e6b6b494f9e69"
+  );
+});
+
 test("generated content-type headers are signed before Request construction", async () => {
   const client = lambdaClient();
   const params = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {

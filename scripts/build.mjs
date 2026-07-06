@@ -16,6 +16,7 @@ const publicTypeExports = [
   "SigV4RequestInit",
   "SigV4RequestSigningOptions",
   "SignAwsRequestOptions",
+  "SigningKeyCache",
   "SignedAwsRequest",
 ];
 const publicValueExportLines = publicValueExports.map((name) => `export { ${name} };`).sort();

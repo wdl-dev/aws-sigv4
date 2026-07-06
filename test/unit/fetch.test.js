@@ -8,11 +8,13 @@ import {
   EXECUTE_API_ENDPOINT,
   FIXED_AMZ_DATE,
   LAMBDA_ENDPOINT,
+  S3_ENDPOINT,
   SESSION_TOKEN,
   assertFetchRejectsBeforeBody,
   executeApiClient,
   helloStream,
   lambdaClient,
+  s3Client,
 } from "./helpers.js";
 
 test("SigV4Client.fetch binds the default global fetch", async () => {
@@ -375,6 +377,29 @@ test("SigV4Client.fetch matches sign() payload hash headers", async () => {
   assert.equal(response.status, 200);
   assert.equal(fetched.headers.get("x-amz-content-sha256"), signed.headers.get("x-amz-content-sha256"));
   assert.equal(fetched.headers.get("authorization"), signed.headers.get("authorization"));
+});
+
+test("SigV4Client.fetch preserves one-shot headers after retry preparation", async () => {
+  let fetched;
+  const contentHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  const client = s3Client({
+    fetch: async (request) => {
+      fetched = request;
+      return new Response("ok");
+    },
+  });
+  const response = await client.fetch(`${S3_ENDPOINT}/example-bucket/objects/headers.txt`, {
+    method: "GET",
+    headers: new Map([
+      ["x-amz-content-sha256", contentHash],
+      ["x-amz-meta-color", "blue"],
+    ]).entries(),
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(fetched.headers.get("x-amz-content-sha256"), contentHash);
+  assert.equal(fetched.headers.get("x-amz-meta-color"), "blue");
+  assert.match(fetched.headers.get("authorization") || "", /x-amz-meta-color/);
 });
 
 test("SigV4Client.fetch passes doubleUrlEncode through request preparation", async () => {
