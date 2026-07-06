@@ -10,7 +10,7 @@ const rootDir = resolve(import.meta.dirname, "..");
 const outDir = join(rootDir, "dist");
 const workDir = mkdtempSync(join(tmpdir(), "aws-sigv4-build-"));
 const tscBin = join(rootDir, "node_modules", "typescript", "bin", "tsc");
-const publicValueExports = ["SigV4Client", "signAwsRequest"];
+const publicValueExports = ["SigV4Client", "signAwsRequest"].sort();
 const publicTypeExports = [
   "SigV4ClientOptions",
   "SigV4RequestInit",
@@ -19,12 +19,8 @@ const publicTypeExports = [
   "SigningKeyCache",
   "SignedAwsRequest",
 ];
-const publicValueExportLines = publicValueExports.map((name) => `export { ${name} };`).sort();
-const publicDeclarationExportLines = [
-  ...publicValueExportLines,
-  `export type { ${publicTypeExports.join(", ")}, };`,
-].sort();
 const publicDeclarationNames = [...publicValueExports, ...publicTypeExports].sort();
+const moduleTextCache = new Map();
 
 // This is a package-specific bundler for this repo's TypeScript output, not a general-purpose bundler.
 try {
@@ -79,8 +75,8 @@ function checkDeclarations(file) {
 function checkBundleSurface(javaScriptFile, declarationFile) {
   const javaScript = readFileSync(javaScriptFile, "utf8");
   const declarations = readFileSync(declarationFile, "utf8");
-  assertSameList(exportLines(javaScript), publicValueExportLines, "JavaScript exports");
-  assertSameList(exportLines(declarations), publicDeclarationExportLines, "declaration exports");
+  assertSameList(exportedNames(javaScript), publicValueExports, "JavaScript exports");
+  assertSameList(exportedNames(declarations), publicDeclarationNames, "declaration exports");
   assertSameList(topLevelDeclarationNames(declarations), publicDeclarationNames, "declaration top-level names");
 }
 
@@ -119,22 +115,68 @@ function sortedModules(moduleDir, entry, declarations) {
 
 function moduleDependencies(code, file, declarations) {
   const dependencies = [];
-  for (const line of code.split("\n")) {
-    const match =
-      /^\s*import\s+"([^"]+)";$/u.exec(line) || /^\s*(?:import|export)\s+.*\sfrom\s+"([^"]+)";$/u.exec(line);
-    if (match) {
-      dependencies.push(resolveModuleSpecifier(file, match[1], declarations));
+  for (const [index, line] of code.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (!/^(?:import|export)\b/u.test(trimmed)) {
+      continue;
     }
+
+    const importMatch = /^import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+"([^"]+)";$/u.exec(trimmed);
+    if (importMatch) {
+      assertUnaliasedSpecifiers(file, index, importMatch[1]);
+      dependencies.push(resolveModuleSpecifier(file, index, importMatch[2], declarations));
+      continue;
+    }
+
+    const reexportMatch = /^export\s+(?:type\s+)?\{([^}]+)\}\s+from\s+"([^"]+)";?$/u.exec(trimmed);
+    if (reexportMatch) {
+      assertUnaliasedSpecifiers(file, index, reexportMatch[1]);
+      dependencies.push(resolveModuleSpecifier(file, index, reexportMatch[2], declarations));
+      continue;
+    }
+
+    if (/^export\s*\{\s*\};?$/u.test(trimmed)) {
+      continue;
+    }
+
+    const namedExportMatch = /^export\s+(?:type\s+)?\{([^}]+)\};?$/u.exec(trimmed);
+    if (namedExportMatch) {
+      assertUnaliasedSpecifiers(file, index, namedExportMatch[1]);
+      throwUnsupportedModuleSyntax(file, index, "local named export lists are not bundled");
+    }
+
+    const declaration = declarations
+      ? /^export\s+(?=(?:declare\s+)?(?:class|function|const|let|var|interface|type|enum|namespace)\b)/u
+      : /^export\s+(?=(?:async\s+)?(?:function|class|const|let|var)\b)/u;
+    if (declaration.test(trimmed)) {
+      continue;
+    }
+
+    throwUnsupportedModuleSyntax(
+      file,
+      index,
+      "only named relative imports, named re-exports, and exported declarations are bundled"
+    );
   }
   return dependencies;
 }
 
-function resolveModuleSpecifier(file, specifier, declarations) {
+function resolveModuleSpecifier(file, lineIndex, specifier, declarations) {
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
-    throw new Error(`Cannot bundle external module ${specifier}`);
+    throwUnsupportedModuleSyntax(file, lineIndex, `external module ${specifier} is not bundled`);
   }
   const resolved = join(dirname(file), specifier);
   return declarations && resolved.endsWith(".js") ? `${resolved.slice(0, -3)}.d.ts` : resolved;
+}
+
+function assertUnaliasedSpecifiers(file, lineIndex, specifiers) {
+  if (specifiers.split(",").some((name) => /\s+as\s+/u.test(name.trim()))) {
+    throwUnsupportedModuleSyntax(file, lineIndex, "aliased import or export specifiers are not bundled");
+  }
+}
+
+function throwUnsupportedModuleSyntax(file, lineIndex, reason) {
+  throw new Error(`${file}:${lineIndex + 1}: unsupported module syntax: ${reason}`);
 }
 
 function stripJavaScriptModuleSyntax(code) {
@@ -173,11 +215,21 @@ function entryExports(code, typeSyntax) {
   return exports;
 }
 
-function exportLines(code) {
-  return code
-    .split("\n")
-    .filter((line) => line.startsWith("export "))
-    .sort();
+function exportedNames(code) {
+  const out = [];
+  for (const match of code.matchAll(/^export\s+(?:type\s+)?\{([^}]+)\};?$/gmu)) {
+    for (const part of match[1].split(",")) {
+      const name = part
+        .trim()
+        .replace(/^type\s+/u, "")
+        .split(/\s+as\s+/u)
+        .pop();
+      if (name) {
+        out.push(name);
+      }
+    }
+  }
+  return out.sort();
 }
 
 function topLevelDeclarationNames(code) {
@@ -200,5 +252,11 @@ function assertSameList(actual, expected, label) {
 }
 
 function readModule(moduleDir, file) {
-  return readFileSync(join(moduleDir, file), "utf8");
+  const path = join(moduleDir, file);
+  let code = moduleTextCache.get(path);
+  if (code === undefined) {
+    code = readFileSync(path, "utf8");
+    moduleTextCache.set(path, code);
+  }
+  return code;
 }

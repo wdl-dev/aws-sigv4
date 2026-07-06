@@ -20,15 +20,15 @@ Before handing off or committing staged changes, run:
 ```sh
 npm run lint
 npm run format:check
-npm test
+npm run test:coverage
 npm pack --dry-run
 git diff --cached --check
 ```
 
-`npm test` runs `tsc --project tsconfig.json` before the Node test suite. The
-published package is intentionally small; `npm pack --dry-run` should keep the
-tarball limited to `LICENSE`, `NOTICE`, `README.md`, `package.json`, and
-`dist/`.
+`npm run test:coverage` runs `tsc --project tsconfig.json` before the Node test
+suite and enforces coverage thresholds. The published package is intentionally
+small; `npm pack --dry-run` should keep the tarball limited to `LICENSE`,
+`NOTICE`, `README.md`, `package.json`, and `dist/`.
 
 Release tags are handled by `.github/workflows/release.yml`. npmjs publishing
 uses trusted publishing with GitHub Actions OIDC, and GitHub Packages publishing

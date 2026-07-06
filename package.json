@@ -42,6 +42,7 @@
     "lint": "eslint .",
     "prepack": "npm run build",
     "test": "npm run build && node --test test/unit/*.test.js",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/index.js --test-coverage-lines=95 --test-coverage-branches=90 --test-coverage-functions=95 test/unit/*.test.js",
     "test:integration:s3": "npm run build && node --test test/s3-integration.test.js"
   },
   "devDependencies": {

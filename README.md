@@ -177,12 +177,14 @@ Signs and sends the request with the configured `fetch` implementation. When
 `retries` is greater than `0`, it retries HTTP 5xx and 429 responses only for
 idempotent methods (`GET`, `HEAD`, `OPTIONS`, `PUT`, and `DELETE`). It also
 retries transient network-level `fetch` rejections for those methods, but not
-aborted requests. `FormData` signing always buffers the body to generate a
-stable multipart boundary. Unsigned S3 `ReadableStream` bodies avoid full
-buffering when `retries: 0`; keep `retries: 0` for large streaming uploads.
-For S3-compatible or custom AWS-compatible services where `PUT` or `DELETE` are
-not safe to replay at the application layer, keep `retries: 0` or enable retries
-only around requests that are known to be safe.
+aborted requests. Retry delays use full jitter between `0` and the capped
+exponential backoff delay; `Retry-After` response headers are not read.
+`FormData` signing always buffers the body to generate a stable multipart
+boundary. Unsigned S3 `ReadableStream` bodies avoid full buffering when
+`retries: 0`; keep `retries: 0` for large streaming uploads. For S3-compatible
+or custom AWS-compatible services where `PUT` or `DELETE` are not safe to replay
+at the application layer, keep `retries: 0` or enable retries only around
+requests that are known to be safe.
 
 ### `signAwsRequest(options)`
 

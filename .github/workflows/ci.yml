@@ -40,8 +40,8 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
-      - name: Run tests
-        run: npm test
+      - name: Check test coverage
+        run: npm run test:coverage
 
       - name: Check package contents
         run: npm pack --dry-run

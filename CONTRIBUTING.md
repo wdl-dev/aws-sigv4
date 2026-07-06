@@ -24,7 +24,7 @@ Before opening a pull request, run:
 ```sh
 npm run lint
 npm run format:check
-npm test
+npm run test:coverage
 npm pack --dry-run
 git diff --cached --check
 ```
