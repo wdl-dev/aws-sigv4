@@ -43,6 +43,8 @@ test(
     });
     let bucketCreated = false;
     let objectCreated = false;
+    let primaryError;
+    const cleanupErrors = [];
 
     try {
       if (existingBucket === undefined) {
@@ -56,60 +58,84 @@ test(
         bucketCreated = true;
       }
 
-      try {
-        await expectOk(
-          s3.fetch(objectUrl, {
-            method: "PUT",
-            headers: {
-              "content-type": "text/plain",
-            },
-            body,
-            signal: requestSignal(),
-          }),
-          "put object"
-        );
-        objectCreated = true;
+      await expectOk(
+        s3.fetch(objectUrl, {
+          method: "PUT",
+          headers: {
+            "content-type": "text/plain",
+          },
+          body,
+          signal: requestSignal(),
+        }),
+        "put object"
+      );
+      objectCreated = true;
 
-        const getObject = await expectOk(
-          s3.fetch(objectUrl, {
-            method: "GET",
-            signal: requestSignal(),
-          }),
-          "get object"
-        );
-        assert.equal(await getObject.text(), body);
+      const getObject = await expectOk(
+        s3.fetch(objectUrl, {
+          method: "GET",
+          signal: requestSignal(),
+        }),
+        "get object"
+      );
+      assert.equal(await getObject.text(), body);
 
-        const listBucket = await expectOk(
-          s3.fetch(
-            `${endpoint}/${bucket}?${new URLSearchParams({ "list-type": "2", prefix: listPrefix }).toString()}`,
-            {
-              method: "GET",
-              signal: requestSignal(),
-            }
-          ),
-          "list bucket"
-        );
-        const listText = await listBucket.text();
-        assert.match(listText, /<ListBucketResult\b/);
-        assert.match(listText, new RegExp(`<Prefix>${escapeRegExp(listPrefix)}</Prefix>`));
-        assert.match(listText, /<KeyCount>1<\/KeyCount>/);
-        assert.equal((listText.match(/<Contents>/gu) || []).length, 1);
-        assert.match(listText, new RegExp(`<Key>${escapeRegExp(key)}</Key>`));
-      } finally {
-        if (objectCreated) {
-          await expectOk(s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }), "delete object");
-        }
-      }
+      const listBucket = await expectOk(
+        s3.fetch(`${endpoint}/${bucket}?${new URLSearchParams({ "list-type": "2", prefix: listPrefix }).toString()}`, {
+          method: "GET",
+          signal: requestSignal(),
+        }),
+        "list bucket"
+      );
+      const listText = await listBucket.text();
+      assert.match(listText, /<ListBucketResult\b/);
+      assert.match(listText, new RegExp(`<Prefix>${escapeRegExp(listPrefix)}</Prefix>`));
+      assert.match(listText, /<KeyCount>1<\/KeyCount>/);
+      assert.equal((listText.match(/<Contents>/gu) || []).length, 1);
+      assert.match(listText, new RegExp(`<Key>${escapeRegExp(key)}</Key>`));
+    } catch (err) {
+      primaryError = err;
     } finally {
-      if (bucketCreated) {
-        await expectOk(
-          s3.fetch(`${endpoint}/${bucket}`, { method: "DELETE", signal: requestSignal() }),
-          "delete bucket"
+      if (objectCreated) {
+        await collectCleanupError(cleanupErrors, () =>
+          expectOk(s3.fetch(objectUrl, { method: "DELETE", signal: requestSignal() }), "delete object")
         );
       }
+      if (bucketCreated) {
+        await collectCleanupError(cleanupErrors, () =>
+          expectOk(s3.fetch(`${endpoint}/${bucket}`, { method: "DELETE", signal: requestSignal() }), "delete bucket")
+        );
+      }
+      throwIntegrationErrors(primaryError, cleanupErrors);
     }
   }
 );
+
+async function collectCleanupError(errors, cleanup) {
+  try {
+    await cleanup();
+  } catch (err) {
+    errors.push(err);
+  }
+}
+
+function throwIntegrationErrors(primaryError, cleanupErrors) {
+  if (primaryError !== undefined) {
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [primaryError, ...cleanupErrors],
+        "S3-compatible integration failed and cleanup also failed"
+      );
+    }
+    throw primaryError;
+  }
+  if (cleanupErrors.length === 1) {
+    throw cleanupErrors[0];
+  }
+  if (cleanupErrors.length > 1) {
+    throw new AggregateError(cleanupErrors, "S3-compatible integration cleanup failed");
+  }
+}
 
 function encodeS3KeyPath(key) {
   return key.split("/").map(encodeURIComponent).join("/");
