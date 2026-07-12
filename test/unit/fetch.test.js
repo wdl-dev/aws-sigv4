@@ -4,11 +4,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { SigV4Client } from "../../dist/index.js";
 import {
+  ACCESS_KEY_ID,
   EXECUTE_API_ENDPOINT,
   FIXED_AMZ_DATE,
   LAMBDA_ENDPOINT,
   S3_ENDPOINT,
+  SECRET_ACCESS_KEY,
   SESSION_TOKEN,
   assertFetchRejectsBeforeBody,
   executeApiClient,
@@ -96,6 +99,50 @@ test("SigV4Client.fetch signs each retry attempt with the current time", async (
     ["20260616T010203Z", "20260616T010204Z"]
   );
   assert.notEqual(seen[0].authorization, seen[1].authorization);
+});
+
+test("SigV4Client.fetch calls subclass and instance sign overrides for every attempt", async () => {
+  for (const overrideKind of ["subclass", "instance"]) {
+    let calls = 0;
+    let signCalls = 0;
+    const options = {
+      accessKeyId: ACCESS_KEY_ID,
+      secretAccessKey: SECRET_ACCESS_KEY,
+      service: "lambda",
+      region: "ap-northeast-1",
+      retries: 1,
+      initialRetryDelayMs: 0,
+      fetch: async () => {
+        calls += 1;
+        return new Response("ok", { status: calls === 1 ? 500 : 200 });
+      },
+    };
+    let client;
+    if (overrideKind === "subclass") {
+      class HookedSigV4Client extends SigV4Client {
+        sign(input, init) {
+          signCalls += 1;
+          return super.sign(input, init);
+        }
+      }
+      client = new HookedSigV4Client(options);
+    } else {
+      client = new SigV4Client(options);
+      const sign = client.sign;
+      client.sign = function wrappedSign(input, init) {
+        signCalls += 1;
+        return sign.call(this, input, init);
+      };
+    }
+
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      method: "PUT",
+      body: "{}",
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(response.status, 200, overrideKind);
+    assert.equal(signCalls, 2, overrideKind);
+  }
 });
 
 test("SigV4Client.fetch snapshots URL objects across asynchronous work and retries", async () => {

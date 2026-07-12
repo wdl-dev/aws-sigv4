@@ -29,6 +29,10 @@ SPDX-License-Identifier: Apache-2.0
 - Snapshotted mutable URL targets, ordinary option bags, Request state, headers,
   and hashed or replayed body bytes so normal asynchronous work and retries
   cannot change the signed request.
+- Reused `fetch()`'s private prepared body across signing attempts instead of
+  copying materialized request bytes again for every attempt, without retaining
+  temporary UTF-8 copies of string bodies, bypassing overridden `sign()` hooks,
+  or reactivating stale prepared bytes after a hook changes request state.
 - Required every request `x-amz-*` header and S3 `content-md5` header to remain
   signed, narrowed custom fetch transports to their actual one-Request contract,
   failed closed when transports return after abort or follow manual redirects,

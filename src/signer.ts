@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareHashedBody } from "./body.js";
+import { prepareHashedBody, type PreparedBody } from "./body.js";
 import {
   AMZ_CONTENT_SHA256_HEADER,
   AMZ_DATE_HEADER,
@@ -47,7 +47,8 @@ export async function signAwsRequest(options: SignAwsRequestOptions): Promise<Si
 export async function signAwsRequestInternal(
   options: SignAwsRequestOptions,
   secretAccessKeyHash?: string | (() => Promise<string>),
-  parsedRequestUrl?: ParsedRequestUrl
+  parsedRequestUrl?: ParsedRequestUrl,
+  reusablePreparedBody?: PreparedBody
 ): Promise<SignedAwsRequest> {
   validateCredentialOptions(options, "signAwsRequest options are required");
   const cache = requireSigningCache(options.cache, "cache");
@@ -86,13 +87,10 @@ export async function signAwsRequestInternal(
   });
   const canonicalPath = canonicalPathname(requestUrl.pathname, options.service, doubleUrlEncode);
 
-  const preparedBody = await prepareHashedBody(
-    options.body,
-    headers,
-    unsignedPayload,
-    false,
-    options.signal ?? undefined
-  );
+  // fetch() can supply the stable snapshot it already hashed or prepared for replay.
+  const preparedBody =
+    reusablePreparedBody ??
+    (await prepareHashedBody(options.body, headers, unsignedPayload, false, options.signal ?? undefined));
 
   // Capture the default clock after body preparation so slow streams do not stale the signature timestamp.
   const amzDate = explicitAmzDate ?? formatAmzDate(new Date());

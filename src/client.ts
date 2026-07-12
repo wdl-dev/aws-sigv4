@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareHashedBody, shouldHashPayload, shouldMaterializeBodyForReplay } from "./body.js";
+import { prepareHashedBody, shouldHashPayload, shouldMaterializeBodyForReplay, type PreparedBody } from "./body.js";
 import { AMZ_CONTENT_SHA256_HEADER } from "./constants.js";
 import { sha256Hex } from "./crypto.js";
 import { signerOverwrittenHeaderNames, validateSignedHeaderValues } from "./headers.js";
@@ -49,6 +49,11 @@ interface ReusableRequestOptions {
   defaultUnsignableHeaders: readonly string[] | undefined;
   hasClientSessionToken: boolean;
   replayBody: boolean;
+}
+
+interface ReusableRequestState {
+  init: SigV4RequestInit;
+  preparedBody: PreparedBody | undefined;
 }
 
 const MAX_RETRY_DELAY_MS = 2_147_483_647;
@@ -101,7 +106,11 @@ export class SigV4Client {
     this.#fetchFn = bindFetch(fetchFn);
   }
 
-  async sign(input: Request | string | URL, init?: SigV4RequestInit): Promise<Request> {
+  sign(input: Request | string | URL, init?: SigV4RequestInit): Promise<Request> {
+    return this.#sign(input, init);
+  }
+
+  async #sign(input: Request | string | URL, init?: SigV4RequestInit, preparedBody?: PreparedBody): Promise<Request> {
     const inputIsRequest = input instanceof Request;
     const inputSnapshot = inputIsRequest ? snapshotRequestInput(input) : undefined;
     const requestUrl = parseRequestUrl(inputSnapshot?.url ?? (input as string | URL));
@@ -155,7 +164,8 @@ export class SigV4Client {
         body,
       },
       () => this.#getSecretAccessKeyHash(),
-      requestUrl
+      requestUrl,
+      preparedBody
     );
 
     if (signal !== undefined) {
@@ -185,7 +195,7 @@ export class SigV4Client {
     const service = requestInit.signing.service ?? this.#service;
     assertParsedRequestCanRepresentSignedUrl(requestUrl.pathname, service);
     const replayBody = this.#retries > 0 && isIdempotentMethod(method);
-    const retryInit = await reusableRequestInitForInput(requestInput, requestInit, {
+    const reusableRequest = await reusableRequestInitForInput(requestInput, requestInit, {
       defaultService: this.#service,
       defaultUnsignedPayload: this.#unsignedPayload,
       defaultSignAllHeaders: this.#signAllHeaders,
@@ -193,9 +203,19 @@ export class SigV4Client {
       hasClientSessionToken: this.#sessionToken !== undefined,
       replayBody,
     });
+    let publicSignRequired = false;
     for (let attempt = 0; attempt <= this.#retries; attempt += 1) {
       const fetchFn = this.#fetchFn;
-      const request = await this.sign(signingInput, retryInit);
+      // Capture for identity comparison and restore the receiver with call() below.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const sign = this.sign;
+      if (sign !== defaultSigV4ClientSign) {
+        publicSignRequired = true;
+        reusableRequest.preparedBody = undefined;
+      }
+      const request = publicSignRequired
+        ? await sign.call(this, signingInput, reusableRequest.init)
+        : await this.#sign(signingInput, reusableRequest.init, reusableRequest.preparedBody);
       const attemptMethod = request.method;
       const attemptSignal = request.signal;
       throwIfSignalAborted(attemptSignal);
@@ -253,16 +273,20 @@ export class SigV4Client {
   }
 }
 
+// Capture the original implementation before callers can replace the public hook.
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const defaultSigV4ClientSign = SigV4Client.prototype.sign;
+
 async function reusableRequestInitForInput(
   input: RequestInputSnapshot | undefined,
   init: SigV4RequestInit,
   options: ReusableRequestOptions
-): Promise<SigV4RequestInit> {
+): Promise<ReusableRequestState> {
   const sourceSignal = init.signal === undefined ? input?.signal : init.signal;
   if (sourceSignal !== undefined && sourceSignal !== null) {
     throwIfSignalAborted(sourceSignal);
   }
-  let reusable: SigV4RequestInit;
+  let reusable: ReusableRequestState;
   if (input === undefined) {
     reusable = await reusableRequestInit(init, options);
   } else {
@@ -279,9 +303,9 @@ async function reusableRequestInitForInput(
     throwIfSignalAborted(sourceSignal);
   }
   if (sourceSignal === undefined) {
-    delete reusable.signal;
+    delete reusable.init.signal;
   } else {
-    reusable.signal = sourceSignal;
+    reusable.init.signal = sourceSignal;
   }
   return reusable;
 }
@@ -335,7 +359,10 @@ function throwIfSignalAborted(signal: AbortSignal): void {
   }
 }
 
-async function reusableRequestInit(init: SigV4RequestInit, options: ReusableRequestOptions): Promise<SigV4RequestInit> {
+async function reusableRequestInit(
+  init: SigV4RequestInit,
+  options: ReusableRequestOptions
+): Promise<ReusableRequestState> {
   const headers = new Headers(init.headers);
   rejectEmptyHeader(headers, AMZ_CONTENT_SHA256_HEADER);
   const service = init.signing?.service ?? options.defaultService;
@@ -362,8 +389,11 @@ async function reusableRequestInit(init: SigV4RequestInit, options: ReusableRequ
       init.body instanceof ReadableStream)
   ) {
     return {
-      ...init,
-      headers,
+      init: {
+        ...init,
+        headers,
+      },
+      preparedBody: undefined,
     };
   }
   const body = await prepareHashedBody(init.body, headers, unsignedPayload, materializeBody, init.signal ?? undefined);
@@ -374,5 +404,8 @@ async function reusableRequestInit(init: SigV4RequestInit, options: ReusableRequ
   if (body.body !== undefined) {
     out.body = body.body;
   }
-  return out;
+  return {
+    init: out,
+    preparedBody: body.body === init.body ? undefined : body,
+  };
 }

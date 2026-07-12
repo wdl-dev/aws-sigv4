@@ -213,6 +213,8 @@ exact reason.
 When payload hashing or retry replay requires materialization, mutable
 `ArrayBuffer`, `ArrayBufferView`, `Uint8Array`, and `URLSearchParams` bodies are
 snapshotted so the hashed bytes and every transmitted attempt remain identical.
+`client.fetch()`'s built-in signing path reuses that private prepared snapshot
+across signing attempts instead of copying the full body again for every attempt.
 Standard `Blob` bodies are immutable and can be reused directly.
 
 `URL` and `Request` inputs are already normalized by the platform URL parser.

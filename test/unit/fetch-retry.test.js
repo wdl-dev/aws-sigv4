@@ -342,6 +342,83 @@ test("SigV4Client.fetch reuses signed payload hashes across retries", async () =
   ]);
 });
 
+test("SigV4Client.fetch reuses one prepared byte snapshot across signing attempts", async () => {
+  const OriginalRequest = globalThis.Request;
+  const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+  const sourceBody = new Uint8Array(4096).fill(0x61);
+  const payloadDigestInputs = [];
+  const signedRequestBodies = [];
+  let calls = 0;
+
+  crypto.subtle.digest = async (algorithm, data) => {
+    if (ArrayBuffer.isView(data) && data.byteLength === sourceBody.byteLength) {
+      payloadDigestInputs.push(data);
+    }
+    return originalDigest(algorithm, data);
+  };
+  globalThis.Request = class RecordingRequest extends OriginalRequest {
+    constructor(input, init) {
+      if (init?.body instanceof Uint8Array && init.body.byteLength === sourceBody.byteLength) {
+        signedRequestBodies.push(init.body);
+      }
+      super(input, init);
+    }
+  };
+
+  try {
+    const client = lambdaClient({
+      retries: 1,
+      initialRetryDelayMs: 0,
+      fetch: async () => {
+        calls += 1;
+        return new Response("ok", { status: calls === 1 ? 500 : 200 });
+      },
+    });
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      method: "PUT",
+      body: sourceBody,
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(response.status, 200);
+  } finally {
+    globalThis.Request = OriginalRequest;
+    crypto.subtle.digest = originalDigest;
+  }
+
+  assert.equal(payloadDigestInputs.length, 1);
+  assert.equal(signedRequestBodies.length, 2);
+  assert.notEqual(payloadDigestInputs[0], sourceBody);
+  assert.equal(signedRequestBodies[0], payloadDigestInputs[0]);
+  assert.equal(signedRequestBodies[1], payloadDigestInputs[0]);
+});
+
+test("SigV4Client.fetch never reactivates a prepared body after a sign override", async () => {
+  const encoder = new TextEncoder();
+  const bodies = [];
+  const client = s3Client({
+    retries: 1,
+    initialRetryDelayMs: 0,
+    fetch: async (request) => {
+      bodies.push(await request.text());
+      return new Response("ok", { status: bodies.length === 1 ? 500 : 200 });
+    },
+  });
+  const defaultSign = client.sign;
+  client.sign = function changeBodyOnce(input, init) {
+    init.body = encoder.encode("changed");
+    client.sign = defaultSign;
+    return defaultSign.call(this, input, init);
+  };
+
+  const response = await client.fetch(`${S3_ENDPOINT}/example-bucket/override-body.bin`, {
+    method: "PUT",
+    body: encoder.encode("original"),
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(bodies, ["changed", "changed"]);
+});
+
 test("SigV4Client.fetch retries ReadableStream bodies", async () => {
   const bodies = [];
   const client = lambdaClient({
