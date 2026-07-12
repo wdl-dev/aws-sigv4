@@ -16,6 +16,9 @@ contributions.
 This package intentionally keeps a narrow SigV4 surface. Changes should avoid
 adding credential providers, AWS SDK command abstractions, endpoint discovery,
 presigned URLs, waiters, or paginators.
+Treat callers, option bags, platform objects, and custom transports as trusted;
+do not add adversarial cross-realm or monkey-patching defenses without a concrete
+consumer requirement.
 
 Use Node.js 24 or newer.
 
@@ -25,6 +28,7 @@ Before opening a pull request, run:
 npm run lint
 npm run format:check
 npm run test:coverage
+npm run check:pack
 npm pack --dry-run
 git diff --cached --check
 ```
@@ -36,7 +40,8 @@ runs the release workflow, verifies the package, publishes to npmjs and GitHub
 Packages, and creates a GitHub Release. Never run `npm publish` by hand.
 If one registry publish job succeeds and the other fails, rerun only failed
 jobs in GitHub Actions; do not rerun the entire workflow, because package
-versions are immutable once accepted by a registry.
+versions are immutable once accepted by a registry. The verified package
+artifact is retained for 30 days for this recovery path.
 
 npmjs publishing uses trusted publishing with GitHub Actions OIDC. GitHub
 Packages publishing uses the workflow `GITHUB_TOKEN`; no repository package

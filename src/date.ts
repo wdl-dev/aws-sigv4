@@ -24,25 +24,14 @@ export function formatAmzDate(value: string | Date): string {
     throw new TypeError(SIGNING_DATE_ERROR);
   }
   const date = typeof value === "string" ? new Date(value) : value;
-  if (!(date instanceof Date)) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
     throw new TypeError(SIGNING_DATE_ERROR);
   }
-  if (Number.isNaN(dateTimeValue(date))) {
-    throw new TypeError(SIGNING_DATE_ERROR);
-  }
-  const amzDate = Date.prototype.toISOString.call(date).replace(/[:-]|\.\d{3}/g, "");
+  const amzDate = date.toISOString().replace(/[:-]|\.\d{3}/g, "");
   if (!/^\d{8}T\d{6}Z$/u.test(amzDate) || !isValidCompactAmzDate(amzDate)) {
     throw new TypeError(SIGNING_DATE_ERROR);
   }
   return amzDate;
-}
-
-function dateTimeValue(date: Date): number {
-  try {
-    return Date.prototype.getTime.call(date);
-  } catch {
-    throw new TypeError(SIGNING_DATE_ERROR);
-  }
 }
 
 function isValidIsoDate(value: string): boolean {

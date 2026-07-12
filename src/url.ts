@@ -12,8 +12,8 @@ export interface ParsedRequestUrl {
 
 export function parseRequestUrl(input: string | URL): ParsedRequestUrl {
   const raw = String(input);
-  if (typeof input === "string" && /\s/u.test(raw)) {
-    throw new TypeError("url must not contain unescaped whitespace");
+  if (typeof input === "string" && /[\s\u0000-\u001f\u007f]/u.test(raw)) {
+    throw new TypeError("url must not contain unescaped whitespace or control characters");
   }
   if (typeof input === "string" && raw.includes("\\")) {
     throw new TypeError("url must not contain backslashes");
@@ -162,7 +162,41 @@ function canonicalSingleEncodedPathname(pathname: string): string {
 }
 
 function canonicalDoubleEncodedPathname(pathname: string): string {
-  return strictEncode(pathname).replace(/%2F/gu, "/");
+  return strictEncode(wireEncodedPathname(pathname)).replace(/%2F/gu, "/");
+}
+
+function wireEncodedPathname(pathname: string): string {
+  let out = "";
+  for (let index = 0; index < pathname.length;) {
+    const char = pathname[index];
+    if (char === "/" || (char === "%" && isHexPair(pathname, index + 1))) {
+      const width = char === "/" ? 1 : 3;
+      out += pathname.slice(index, index + width);
+      index += width;
+      continue;
+    }
+    const codePoint = pathname.codePointAt(index);
+    if (codePoint === undefined) {
+      break;
+    }
+    const charValue = String.fromCodePoint(codePoint);
+    out += shouldWhatwgEncodePathCodePoint(codePoint) ? strictEncode(charValue) : charValue;
+    index += charValue.length;
+  }
+  return out;
+}
+
+function shouldWhatwgEncodePathCodePoint(codePoint: number): boolean {
+  return (
+    codePoint > 0x7e ||
+    codePoint === 0x22 ||
+    codePoint === 0x3c ||
+    codePoint === 0x3e ||
+    codePoint === 0x5e ||
+    codePoint === 0x60 ||
+    codePoint === 0x7b ||
+    codePoint === 0x7d
+  );
 }
 
 function collapsePathSlashes(pathname: string): string {

@@ -16,25 +16,37 @@ import { sha256Hex, signatureHex } from "./crypto.js";
 import { formatAmzDate, optionalAmzDate } from "./date.js";
 import { canonicalHeaderBlock, signerOverwrittenHeaderNames, validateSignedHeaderValues } from "./headers.js";
 import {
+  normalizeUnsignableHeaders,
   optionalBoolean,
   requireDefinedOption,
   requireSigningCache,
+  resolveDoubleUrlEncode,
   resolveUnsignedPayload,
-  snapshotUnsignableHeaders,
+  snapshotSignAwsRequestOptions,
   validateCredentialOptions,
 } from "./options.js";
 import { defaultMethod, normalizeMethod, rejectEmptyHeader } from "./request.js";
+import { abortReason } from "./retry.js";
 import type { SignAwsRequestOptions, SignedAwsRequest } from "./types.js";
 import { canonicalPathname, canonicalQuery, parseRequestUrl, type ParsedRequestUrl } from "./url.js";
 
 export async function signAwsRequest(options: SignAwsRequestOptions): Promise<SignedAwsRequest> {
-  return signAwsRequestInternal(options);
+  const snapshot = snapshotSignAwsRequestOptions(options);
+  const signal = snapshot.signal ?? undefined;
+  if (signal !== undefined) {
+    throwIfSigningSignalAborted(signal);
+  }
+  const signed = await signAwsRequestInternal(snapshot);
+  if (signal !== undefined) {
+    throwIfSigningSignalAborted(signal);
+  }
+  return signed;
 }
 
 /** @internal */
 export async function signAwsRequestInternal(
   options: SignAwsRequestOptions,
-  secretAccessKeyHash?: string,
+  secretAccessKeyHash?: string | (() => Promise<string>),
   parsedRequestUrl?: ParsedRequestUrl
 ): Promise<SignedAwsRequest> {
   validateCredentialOptions(options, "signAwsRequest options are required");
@@ -44,15 +56,18 @@ export async function signAwsRequestInternal(
   const requestUrl = parsedRequestUrl ?? parseRequestUrl(options.url);
   const url = requestUrl.url;
   const method = normalizeMethod(options.method === undefined ? defaultMethod(options.body) : options.method);
-  const headers = new Headers(options.headers || {});
+  const headers = new Headers(options.headers);
   rejectEmptyHeader(headers, AMZ_CONTENT_SHA256_HEADER);
   const unsignedPayload = resolveUnsignedPayload(
     optionalBoolean(options.unsignedPayload, "unsignedPayload"),
     options.service
   );
   const signAllHeaders = optionalBoolean(options.signAllHeaders, "signAllHeaders");
-  const unsignableHeaders = snapshotUnsignableHeaders(options, options.unsignableHeaders, "unsignableHeaders");
-  const doubleUrlEncode = optionalBoolean(options.doubleUrlEncode, "doubleUrlEncode") ?? false;
+  const unsignableHeaders = normalizeUnsignableHeaders(options.unsignableHeaders, "unsignableHeaders");
+  const doubleUrlEncode = resolveDoubleUrlEncode(
+    optionalBoolean(options.doubleUrlEncode, "doubleUrlEncode"),
+    options.service
+  );
   if (unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
     headers.set(AMZ_CONTENT_SHA256_HEADER, UNSIGNED_PAYLOAD);
   }
@@ -64,13 +79,20 @@ export async function signAwsRequestInternal(
   }
 
   validateSignedHeaderValues(headers, {
+    service: options.service,
     signAllHeaders,
     unsignableHeaders,
     overwrittenHeaderNames: signerOverwrittenHeaderNames(options.sessionToken !== undefined),
   });
   const canonicalPath = canonicalPathname(requestUrl.pathname, options.service, doubleUrlEncode);
 
-  const preparedBody = await prepareHashedBody(options.body, headers, unsignedPayload);
+  const preparedBody = await prepareHashedBody(
+    options.body,
+    headers,
+    unsignedPayload,
+    false,
+    options.signal ?? undefined
+  );
 
   // Capture the default clock after body preparation so slow streams do not stale the signature timestamp.
   const amzDate = explicitAmzDate ?? formatAmzDate(new Date());
@@ -84,6 +106,7 @@ export async function signAwsRequestInternal(
     headers.set(AMZ_CONTENT_SHA256_HEADER, canonicalPayloadHash);
   }
   const { canonicalHeaders, signedHeaders } = canonicalHeaderBlock(url, headers, {
+    service: options.service,
     signAllHeaders,
     unsignableHeaders,
   });
@@ -96,9 +119,11 @@ export async function signAwsRequestInternal(
     canonicalPayloadHash,
   ].join("\n");
   const stringToSign = [AWS_ALGORITHM, amzDate, credentialScope, await sha256Hex(canonicalRequest)].join("\n");
+  const resolvedSecretAccessKeyHash =
+    typeof secretAccessKeyHash === "function" ? await secretAccessKeyHash() : secretAccessKeyHash;
   const signature = await signatureHex({
     secretAccessKey: options.secretAccessKey,
-    secretAccessKeyHash,
+    secretAccessKeyHash: resolvedSecretAccessKeyHash,
     date,
     region: options.region,
     service: options.service,
@@ -129,4 +154,10 @@ async function canonicalPayloadHashValue(headers: Headers, body: Uint8Array): Pr
     return explicit;
   }
   return sha256Hex(body);
+}
+
+function throwIfSigningSignalAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw abortReason(signal);
+  }
 }

@@ -7,6 +7,47 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Breaking: path signing now follows AWS-style service defaults, using
+  single-encoded paths for `service: "s3"` and double-encoded, normalized paths
+  for other services; explicit `doubleUrlEncode` values still override the
+  default.
+- Breaking: `SigV4Client.fetch()` now disables automatic redirects, uses an
+  error-on-redirect policy by default, permits manual redirect handling, and
+  rejects `redirect: "follow"`; signed requests also reject `mode: "no-cors"`.
+- Breaking: `Request` input bodies are transferred directly instead of being
+  cloned, avoiding an unread tee branch while making the original request body
+  unavailable after the signed request consumes it.
+- Hid client credentials and transport state in native private fields and
+  verified that runtime request guards preserve authorization and signed headers.
+- Added abort-aware body materialization and retry-response cleanup, exact
+  abort-reason propagation, and a lower-level `signAwsRequest()` signal option.
+- Fixed raw-string double path encoding, rejected non-transportable raw control
+  characters, and made default redirect rejection compatible with workerd.
+- Matched platform `Request` inheritance for signals and `body: null`, rejected
+  used request bodies and non-standard async-iterable bodies, and documented
+  runtime-specific signed-header and transport-extension constraints.
+- Snapshotted mutable URL targets, ordinary option bags, Request state, headers,
+  and hashed or replayed body bytes so normal asynchronous work and retries
+  cannot change the signed request.
+- Required every request `x-amz-*` header and S3 `content-md5` header to remain
+  signed, narrowed custom fetch transports to their actual one-Request contract,
+  failed closed when transports return after abort or follow manual redirects,
+  rejected Fetch-forbidden client methods before body consumption, and canceled
+  invalid body streams.
+- Rejected unsupported body objects on unsigned as well as hashed payload paths,
+  and documented the focused runtime contract: standard same-realm Web API
+  objects and trusted callers and transports.
+- Made the repository-specific builder validate a complete temporary output
+  before replacing `dist`; package validation now installs one real tarball,
+  compiles a strict TypeScript consumer, and runs an ESM import/constructor
+  smoke test against it.
+- Restricted retry counts to non-negative safe integers and rejected explicit
+  `null` retry counts and delay bounds.
+- Made package contents an exact allowlist, made the S3 integration command fail
+  instead of silently skipping without an explicit mode, and made both registries
+  publish the exact tarball accepted by package validation and retained for
+  failed-job recovery.
+
 ## 2.0.0
 
 - Breaking: signed header values, session tokens, and credential scope

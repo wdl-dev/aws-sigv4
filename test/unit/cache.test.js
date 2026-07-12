@@ -81,7 +81,11 @@ test("SigV4Client shares in-flight secret hash promises", async () => {
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   const client = lambdaClient();
   let releaseSecretDigest;
+  let secretDigestStartedResolve;
   let secretDigestCalls = 0;
+  const secretDigestStarted = new Promise((resolve) => {
+    secretDigestStartedResolve = resolve;
+  });
   const secretDigestPromise = new Promise((resolve, reject) => {
     releaseSecretDigest = async () => {
       try {
@@ -95,6 +99,7 @@ test("SigV4Client shares in-flight secret hash promises", async () => {
     crypto.subtle.digest = (algorithm, data) => {
       if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
         secretDigestCalls += 1;
+        secretDigestStartedResolve();
         return secretDigestPromise;
       }
       return originalDigest(algorithm, data);
@@ -103,10 +108,10 @@ test("SigV4Client shares in-flight secret hash promises", async () => {
     const first = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
       signing: { signingDate: FIXED_AMZ_DATE },
     });
-    assert.equal(secretDigestCalls, 1);
     const second = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
       signing: { signingDate: FIXED_AMZ_DATE },
     });
+    await secretDigestStarted;
     assert.equal(secretDigestCalls, 1);
     await releaseSecretDigest();
 

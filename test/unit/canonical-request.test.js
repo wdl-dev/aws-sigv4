@@ -509,6 +509,19 @@ test("string URL signing includes non-default ports in host", async () => {
   );
 });
 
+test("IPv6 URL literals retain brackets and ports in the canonical host", async () => {
+  const url = "https://[::1]:8080/example-bucket/key.txt";
+  const signedString = await s3Request({ method: "GET", url });
+  const signedUrlObject = await s3Request({ method: "GET", url: new URL(url) });
+  assert.equal(signedString.url, url);
+  assert.equal(signedString.headers.get("host"), "[::1]:8080");
+  assert.equal(
+    signedString.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=df820e10a5b6b391e8216f55d1c0320f139e0b08b7143b1fa7948b495c13c13b"
+  );
+  assert.equal(signedUrlObject.headers.get("authorization"), signedString.headers.get("authorization"));
+});
+
 test("HTTP URLs are signed with the URL host", async () => {
   const signed = await lambdaRequest({
     method: "GET",
@@ -530,11 +543,11 @@ test("URL object inputs use platform-normalized path and query", async () => {
   assert.equal(signed.url, `${LAMBDA_ENDPOINT}/2025-09-09/a%2Fb?token=ab+cd&B=2`);
   assert.equal(
     signed.headers.get("authorization"),
-    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=6994c4a7114a23fe9ffc83188c968d741d73fb88a6f3e00d889e81085006c930"
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=f420d67689f12a5647a8513689764451d2ee76682918700795d91d31b0f33cee"
   );
 });
 
-test("doubleUrlEncode double-escapes non-S3 canonical path bytes", async () => {
+test("non-S3 paths use doubleUrlEncode by default and allow a single-encoded override", async () => {
   const url = `${EXECUTE_API_ENDPOINT}/prod/my+folder/a%2Fb/%7E`;
   const signedDefault = await executeApiRequest({
     method: "GET",
@@ -545,14 +558,65 @@ test("doubleUrlEncode double-escapes non-S3 canonical path bytes", async () => {
     url,
     doubleUrlEncode: true,
   });
+  const signedSingleEncoded = await executeApiRequest({
+    method: "GET",
+    url,
+    doubleUrlEncode: false,
+  });
+  assert.equal(signedDefault.headers.get("authorization"), signedDoubleEncoded.headers.get("authorization"));
   assert.equal(
     signedDefault.headers.get("authorization"),
-    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=5ae33dd5d01776fcb1fb836dd84c6e28d168b21da37ab3506624ec211dfc9c7c"
-  );
-  assert.equal(
-    signedDoubleEncoded.headers.get("authorization"),
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=7635698892bbcc2d515044be999eaba42348d3b1ec8b78436b7cc0da8cc0a5ac"
   );
+  assert.equal(
+    signedSingleEncoded.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=5ae33dd5d01776fcb1fb836dd84c6e28d168b21da37ab3506624ec211dfc9c7c"
+  );
+});
+
+test("doubleUrlEncode signs raw string paths using their WHATWG wire encoding", async () => {
+  for (const path of ["/prod/café/中", "/prod/🧪/😀", '/prod/a{b}^c"d`e<f>']) {
+    const rawUrl = `${EXECUTE_API_ENDPOINT}${path}`;
+    const signedString = await executeApiRequest({ method: "GET", url: rawUrl });
+    const signedUrlObject = await executeApiRequest({ method: "GET", url: new URL(rawUrl) });
+    assert.equal(signedString.headers.get("authorization"), signedUrlObject.headers.get("authorization"), path);
+  }
+  const unicode = await executeApiRequest({
+    method: "GET",
+    url: `${EXECUTE_API_ENDPOINT}/prod/café/中`,
+  });
+  assert.equal(
+    unicode.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/execute-api/aws4_request, SignedHeaders=host;x-amz-date, Signature=9aeccf7aa7f41e134624135f1832b6af9af591e079ff52eba8576960bb424639"
+  );
+});
+
+test("Lambda MicroVM paths sign identically with either path-encoding mode", async () => {
+  for (const path of [
+    "/2025-09-09/microvms",
+    "/2025-09-09/microvms/vm-1_foo.bar~baz",
+    "/2025-09-09/microvms/vm-1_foo.bar~baz/auth-token",
+  ]) {
+    const url = `${LAMBDA_ENDPOINT}${path}`;
+    const signedDefault = await lambdaRequest({ method: "GET", url });
+    const signedSingleEncoded = await lambdaRequest({ method: "GET", url, doubleUrlEncode: false });
+    const signedDoubleEncoded = await lambdaRequest({ method: "GET", url, doubleUrlEncode: true });
+    assert.equal(signedDefault.headers.get("authorization"), signedDoubleEncoded.headers.get("authorization"), path);
+    assert.equal(signedDefault.headers.get("authorization"), signedSingleEncoded.headers.get("authorization"), path);
+  }
+});
+
+test("HTTP methods are normalized to uppercase before signing", async () => {
+  const lower = await lambdaRequest({
+    method: "get",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+  });
+  const upper = await lambdaRequest({
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+  });
+  assert.equal(lower.method, "GET");
+  assert.equal(lower.headers.get("authorization"), upper.headers.get("authorization"));
 });
 
 test("doubleUrlEncode distinguishes literal plus from an encoded plus byte", async () => {
@@ -691,17 +755,39 @@ test("SigV4Client doubleUrlEncode default can be overridden per request", async 
   );
 });
 
+test("SigV4Client derives the path-encoding default from a per-request service override", async () => {
+  const url = `${EXECUTE_API_ENDPOINT}/prod/a%2Fb`;
+  const client = s3Client({ region: "ap-northeast-1" });
+  const signedDefault = await client.sign(url, {
+    signing: { service: "execute-api", signingDate: FIXED_AMZ_DATE },
+  });
+  const signedDoubleEncoded = await client.sign(url, {
+    signing: { service: "execute-api", signingDate: FIXED_AMZ_DATE, doubleUrlEncode: true },
+  });
+  const signedSingleEncoded = await client.sign(url, {
+    signing: { service: "execute-api", signingDate: FIXED_AMZ_DATE, doubleUrlEncode: false },
+  });
+  assert.equal(signedDefault.headers.get("authorization"), signedDoubleEncoded.headers.get("authorization"));
+  assert.notEqual(signedDefault.headers.get("authorization"), signedSingleEncoded.headers.get("authorization"));
+});
+
 test("S3 keeps single-encoded path semantics by default but can opt into doubleUrlEncode", async () => {
   const url = `${S3_ENDPOINT}/example-bucket/my+folder/a%2Fb/%7E`;
   const signedDefault = await s3Request({
     method: "GET",
     url,
   });
+  const signedSingleEncoded = await s3Request({
+    method: "GET",
+    url,
+    doubleUrlEncode: false,
+  });
   const signedDoubleEncoded = await s3Request({
     method: "GET",
     url,
     doubleUrlEncode: true,
   });
+  assert.equal(signedDefault.headers.get("authorization"), signedSingleEncoded.headers.get("authorization"));
   assert.notEqual(signedDefault.headers.get("authorization"), signedDoubleEncoded.headers.get("authorization"));
   assert.equal(
     signedDoubleEncoded.headers.get("authorization"),
@@ -709,18 +795,35 @@ test("S3 keeps single-encoded path semantics by default but can opt into doubleU
   );
 });
 
-test("canonical paths preserve repeated slashes for non-S3 services", async () => {
+test("non-S3 defaults collapse repeated slashes while single encoding preserves them", async () => {
   const base = {
     method: "GET",
   };
-  const signedRepeatedSlash = await lambdaRequest({
+  const signedRepeatedSlashDefault = await lambdaRequest({
     ...base,
     url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms",
   });
-  const signedSingleSlash = await lambdaRequest({
+  const signedSingleSlashDefault = await lambdaRequest({
     ...base,
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
   });
-  assert.equal(signedRepeatedSlash.url, "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms");
-  assert.notEqual(signedRepeatedSlash.headers.get("authorization"), signedSingleSlash.headers.get("authorization"));
+  const signedRepeatedSlashSingleEncoded = await lambdaRequest({
+    ...base,
+    url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms",
+    doubleUrlEncode: false,
+  });
+  const signedSingleSlashSingleEncoded = await lambdaRequest({
+    ...base,
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    doubleUrlEncode: false,
+  });
+  assert.equal(signedRepeatedSlashDefault.url, "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09//microvms");
+  assert.equal(
+    signedRepeatedSlashDefault.headers.get("authorization"),
+    signedSingleSlashDefault.headers.get("authorization")
+  );
+  assert.notEqual(
+    signedRepeatedSlashSingleEncoded.headers.get("authorization"),
+    signedSingleSlashSingleEncoded.headers.get("authorization")
+  );
 });

@@ -4,14 +4,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { signAwsRequest } from "../../dist/index.js";
-
 import {
-  ACCESS_KEY_ID,
   FIXED_AMZ_DATE,
   LAMBDA_ENDPOINT,
   S3_ENDPOINT,
-  SECRET_ACCESS_KEY,
   SESSION_TOKEN,
   lambdaClient,
   lambdaRequest,
@@ -23,6 +19,25 @@ test("SigV4Client rejects non-function fetch options", () => {
   for (const fetch of [null, false, 0]) {
     assert.throws(() => lambdaClient({ fetch }), /fetch must be a function/);
   }
+});
+
+test("SigV4Client keeps credential and transport state out of enumerable properties", async () => {
+  const client = lambdaClient({ sessionToken: SESSION_TOKEN });
+  assert.deepEqual(Object.keys(client), []);
+  assert.deepEqual({ ...client }, {});
+  assert.equal(JSON.stringify(client), "{}");
+  for (const name of ["accessKeyId", "secretAccessKey", "sessionToken", "cache", "fetchFn"]) {
+    assert.equal(Object.hasOwn(client, name), false, name);
+  }
+
+  const before = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  client.secretAccessKey = "attacker-controlled-shadow";
+  const after = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(after.headers.get("authorization"), before.headers.get("authorization"));
 });
 
 test("signAllHeaders signs otherwise volatile headers", async () => {
@@ -202,6 +217,36 @@ test("SigV4Client rejects GET and HEAD bodies", async () => {
   assert.equal(await new Response(signed.body).text(), "{}");
 });
 
+test("signing defaults to GET without a body and POST with a body", async () => {
+  const url = `${LAMBDA_ENDPOINT}/2025-09-09/microvms`;
+  const lowerGet = await lambdaRequest({ url });
+  const lowerPost = await lambdaRequest({ url, body: "{}" });
+  assert.equal(lowerGet.method, "GET");
+  assert.equal(lowerPost.method, "POST");
+
+  const observedFetchMethods = [];
+  const client = lambdaClient({
+    fetch: async (request) => {
+      observedFetchMethods.push(request.method);
+      return new Response("ok");
+    },
+  });
+  const clientGet = await client.sign(url, { signing: { signingDate: FIXED_AMZ_DATE } });
+  const clientPost = await client.sign(url, {
+    body: "{}",
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(clientGet.method, "GET");
+  assert.equal(clientPost.method, "POST");
+
+  await client.fetch(url, { signing: { signingDate: FIXED_AMZ_DATE } });
+  await client.fetch(url, {
+    body: "{}",
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.deepEqual(observedFetchMethods, ["GET", "POST"]);
+});
+
 test("sign(Request) preserves request transport options", async () => {
   const client = lambdaClient();
   const controller = new AbortController();
@@ -257,20 +302,59 @@ test("unsignableHeaders adds to the default volatile header set", async () => {
   assert.doesNotMatch(authorization, /x-debug-only/);
 });
 
-test("unsignableHeaders cannot exclude SigV4 core headers", async () => {
-  const signed = await s3Request({
-    method: "PUT",
-    url: `${S3_ENDPOINT}/example-bucket/core-headers.txt`,
-    headers: {
-      "x-debug-only": "skip-me",
+test("unsignableHeaders rejects SigV4 core headers", async () => {
+  for (const header of ["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"]) {
+    await assert.rejects(
+      () =>
+        s3Request({
+          method: "PUT",
+          url: `${S3_ENDPOINT}/example-bucket/core-headers.txt`,
+          body: "hello",
+          sessionToken: SESSION_TOKEN,
+          unsignableHeaders: [header],
+        }),
+      new RegExp(`mandatory signed header ${header}`)
+    );
+  }
+});
+
+test("unsignableHeaders rejects request x-amz headers and S3 content-md5", async () => {
+  for (const fixture of [
+    {
+      request: () =>
+        lambdaRequest({
+          method: "GET",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          headers: { "x-amz-meta-owner": "alice" },
+          unsignableHeaders: ["x-amz-meta-owner"],
+        }),
+      header: "x-amz-meta-owner",
     },
-    body: "hello",
-    sessionToken: SESSION_TOKEN,
-    unsignableHeaders: ["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token", "x-debug-only"],
-  });
-  const authorization = signed.headers.get("authorization") || "";
-  assert.match(authorization, /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token/);
-  assert.doesNotMatch(authorization, /x-debug-only/);
+    {
+      request: () =>
+        s3Request({
+          method: "PUT",
+          url: `${S3_ENDPOINT}/example-bucket/checksum.txt`,
+          headers: { "x-amz-checksum-sha256": "checksum-base64" },
+          body: "hello",
+          unsignableHeaders: ["x-amz-checksum-sha256"],
+        }),
+      header: "x-amz-checksum-sha256",
+    },
+    {
+      request: () =>
+        s3Request({
+          method: "PUT",
+          url: `${S3_ENDPOINT}/example-bucket/content-md5.txt`,
+          headers: { "content-md5": "CY9rzUYh03PK3k6DJie09g==" },
+          body: "hello",
+          unsignableHeaders: ["content-md5"],
+        }),
+      header: "content-md5",
+    },
+  ]) {
+    await assert.rejects(fixture.request, new RegExp(`mandatory signed header ${fixture.header}`));
+  }
 });
 
 test("unsignableHeaders rejects string inputs", async () => {
@@ -343,75 +427,6 @@ test("SigV4Client snapshots unsignableHeaders iterables", async () => {
   const second = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init);
   assert.equal(first.headers.get("authorization"), second.headers.get("authorization"));
   assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
-});
-
-test("SigV4Client snapshots per-request unsignableHeaders iterables", async () => {
-  function* headersToSkip() {
-    yield "x-debug-only";
-  }
-  const client = lambdaClient();
-  const init = {
-    method: "GET",
-    headers: {
-      "x-debug-only": "skip-me",
-    },
-    signing: {
-      signingDate: FIXED_AMZ_DATE,
-      unsignableHeaders: headersToSkip(),
-    },
-  };
-  const first = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init);
-  const second = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init);
-  assert.equal(first.headers.get("authorization"), second.headers.get("authorization"));
-  assert.doesNotMatch(first.headers.get("authorization") || "", /x-debug-only/);
-  assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
-});
-
-test("signAwsRequest snapshots one-shot unsignableHeaders iterables", async () => {
-  function* headersToSkip() {
-    yield "x-debug-only";
-  }
-  const options = {
-    accessKeyId: ACCESS_KEY_ID,
-    secretAccessKey: SECRET_ACCESS_KEY,
-    service: "lambda",
-    region: "ap-northeast-1",
-    signingDate: FIXED_AMZ_DATE,
-    method: "GET",
-    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    headers: {
-      "x-debug-only": "skip-me",
-    },
-    unsignableHeaders: headersToSkip(),
-  };
-  const first = await signAwsRequest(options);
-  const second = await signAwsRequest(options);
-  assert.equal(first.headers.get("authorization"), second.headers.get("authorization"));
-  assert.doesNotMatch(first.headers.get("authorization") || "", /x-debug-only/);
-  assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
-});
-
-test("signAwsRequest snapshots failed one-shot unsignableHeaders validation", async () => {
-  function* headersToSkip() {
-    yield "x-debug-only";
-    yield "";
-  }
-  const options = {
-    accessKeyId: ACCESS_KEY_ID,
-    secretAccessKey: SECRET_ACCESS_KEY,
-    service: "lambda",
-    region: "ap-northeast-1",
-    signingDate: FIXED_AMZ_DATE,
-    method: "GET",
-    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    headers: {
-      "x-debug-only": "skip-me",
-    },
-    unsignableHeaders: headersToSkip(),
-  };
-  const message = /unsignableHeaders must contain only non-empty strings/;
-  await assert.rejects(() => signAwsRequest(options), message);
-  await assert.rejects(() => signAwsRequest(options), message);
 });
 
 test("SigV4Client rereads reusable unsignableHeaders iterables", async () => {

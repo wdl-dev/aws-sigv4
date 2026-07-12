@@ -3,7 +3,7 @@
 
 import { AUTH_PARAM_SEPARATOR_RE, CONTROL_CHAR_RE, WHITESPACE_RE } from "./constants.js";
 import { optionalAmzDate } from "./date.js";
-import type { SigV4RequestSigningOptions, SigningKeyCache } from "./types.js";
+import type { SigV4RequestSigningOptions, SignAwsRequestOptions, SigningKeyCache } from "./types.js";
 import { rejectNonPrintableAscii } from "./validation.js";
 
 const CLIENT_SIGNING_OPTION_KEYS = new Set([
@@ -15,13 +15,13 @@ const CLIENT_SIGNING_OPTION_KEYS = new Set([
   "unsignableHeaders",
   "doubleUrlEncode",
 ]);
-const UNSIGNABLE_HEADER_SNAPSHOTS = new WeakMap<
-  object,
-  {
-    source: Iterable<string>;
-    result: { ok: true; value: string[] | undefined } | { ok: false; error: unknown };
-  }
->();
+
+export function snapshotSignAwsRequestOptions(value: unknown): SignAwsRequestOptions {
+  requireOptionsObject(value, "signAwsRequest options are required");
+  const snapshot = { ...(value as SignAwsRequestOptions) };
+  validateCredentialOptions(snapshot, "signAwsRequest options are required");
+  return snapshot;
+}
 
 export function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOptions {
   if (options === undefined) {
@@ -30,32 +30,21 @@ export function normalizeClientSigningOptions(options: unknown): SigV4RequestSig
   if (options === null || typeof options !== "object") {
     throw new TypeError("init.signing must be an object");
   }
-  for (const key of Object.keys(options)) {
+  const source = { ...(options as SigV4RequestSigningOptions & Record<string, unknown>) };
+  for (const key of Object.keys(source)) {
     if (!CLIENT_SIGNING_OPTION_KEYS.has(key)) {
       throw new TypeError(`${signingOptionDisplayName(key)} cannot override client credentials or transport options`);
     }
   }
-  const record = options as SigV4RequestSigningOptions & Record<string, unknown>;
-  const normalized = { ...record };
-  const service = optionalCredentialComponent(ownNonNullOption(record, "service"), "init.signing.service");
-  setOrDelete(normalized, "service", service);
-  const region = optionalCredentialComponent(ownNonNullOption(record, "region"), "init.signing.region");
-  setOrDelete(normalized, "region", region);
-  const signingDate = optionalAmzDate(ownNonNullOption(record, "signingDate"));
-  setOrDelete(normalized, "signingDate", signingDate);
-  const unsignedPayload = optionalBoolean(ownOption(record, "unsignedPayload"), "init.signing.unsignedPayload");
-  const signAllHeaders = optionalBoolean(ownOption(record, "signAllHeaders"), "init.signing.signAllHeaders");
-  const doubleUrlEncode = optionalBoolean(ownOption(record, "doubleUrlEncode"), "init.signing.doubleUrlEncode");
-  const unsignableHeaders = snapshotUnsignableHeaders(
-    options,
-    ownOption(record, "unsignableHeaders"),
-    "init.signing.unsignableHeaders"
-  );
-  setOrDelete(normalized, "unsignedPayload", unsignedPayload);
-  setOrDelete(normalized, "signAllHeaders", signAllHeaders);
-  setOrDelete(normalized, "unsignableHeaders", unsignableHeaders);
-  setOrDelete(normalized, "doubleUrlEncode", doubleUrlEncode);
-  return normalized;
+  return {
+    service: optionalCredentialComponent(nullAsUndefined(source.service), "init.signing.service"),
+    region: optionalCredentialComponent(nullAsUndefined(source.region), "init.signing.region"),
+    signingDate: optionalAmzDate(nullAsUndefined(source.signingDate)),
+    unsignedPayload: optionalBoolean(source.unsignedPayload, "init.signing.unsignedPayload"),
+    signAllHeaders: optionalBoolean(source.signAllHeaders, "init.signing.signAllHeaders"),
+    unsignableHeaders: normalizeUnsignableHeaders(source.unsignableHeaders, "init.signing.unsignableHeaders"),
+    doubleUrlEncode: optionalBoolean(source.doubleUrlEncode, "init.signing.doubleUrlEncode"),
+  };
 }
 
 function signingOptionDisplayName(key: string): string {
@@ -116,8 +105,8 @@ export function requireSecretAccessKey(value: unknown): asserts value is string 
 }
 
 export function requireNonNegativeInteger(value: number, name: string): number {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new TypeError(`${name} must be a non-negative integer`);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative integer within the safe integer range`);
   }
   return value;
 }
@@ -143,6 +132,10 @@ export function resolveUnsignedPayload(explicit: boolean | undefined, service: s
   return explicit ?? service === "s3";
 }
 
+export function resolveDoubleUrlEncode(explicit: boolean | undefined, service: string): boolean {
+  return explicit ?? service !== "s3";
+}
+
 export function normalizeUnsignableHeaders(value: unknown, name: string): string[] | undefined {
   if (value === undefined) {
     return undefined;
@@ -160,33 +153,6 @@ export function normalizeUnsignableHeaders(value: unknown, name: string): string
     }
     return header;
   });
-}
-
-export function snapshotUnsignableHeaders(owner: object, source: unknown, name: string): string[] | undefined {
-  if (source === undefined) {
-    return undefined;
-  }
-  if (!isIterable(source)) {
-    return normalizeUnsignableHeaders(source, name);
-  }
-  if (!isOneShotIterable(source)) {
-    return normalizeUnsignableHeaders(source, name);
-  }
-  const cached = UNSIGNABLE_HEADER_SNAPSHOTS.get(owner);
-  if (cached && cached.source === source) {
-    if (cached.result.ok) {
-      return cached.result.value;
-    }
-    throw cached.result.error;
-  }
-  try {
-    const value = normalizeUnsignableHeaders(source, name);
-    UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, result: { ok: true, value } });
-    return value;
-  } catch (error) {
-    UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, result: { ok: false, error } });
-    throw error;
-  }
 }
 
 export function requireOptionsObject(value: unknown, message: string): void {
@@ -241,15 +207,6 @@ function rejectSurroundingWhitespace(value: string, name: string): void {
   }
 }
 
-function ownNonNullOption(record: Record<string, unknown>, name: string): unknown {
-  const value = ownOption(record, name);
-  return value === null ? undefined : value;
-}
-
-function ownOption(record: Record<string, unknown>, name: string): unknown {
-  return Object.hasOwn(record, name) ? record[name] : undefined;
-}
-
 function optionalCredentialComponent(value: unknown, name: string): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -258,28 +215,8 @@ function optionalCredentialComponent(value: unknown, name: string): string | und
   return value;
 }
 
-function setOrDelete<K extends keyof SigV4RequestSigningOptions>(
-  record: SigV4RequestSigningOptions,
-  key: K,
-  value: SigV4RequestSigningOptions[K] | undefined
-): void {
-  if (value === undefined) {
-    Reflect.deleteProperty(record, key);
-  } else {
-    record[key] = value;
-  }
-}
-
-function isOneShotIterable(value: Iterable<string>): boolean {
-  return Object.is(value[Symbol.iterator](), value);
-}
-
-function isIterable(value: unknown): value is Iterable<string> {
-  return (
-    value !== null &&
-    typeof value !== "string" &&
-    typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function"
-  );
+function nullAsUndefined(value: unknown): unknown {
+  return value === null ? undefined : value;
 }
 
 function isSigningCache(value: unknown): value is SigningKeyCache {

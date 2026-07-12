@@ -44,7 +44,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Check package contents
-        run: npm pack --dry-run
+        run: npm run check:pack
 
   s3-aws-integration:
     # Keep this name in sync with release.yml required_jobs_json.

@@ -13,9 +13,9 @@ export interface SigV4ClientOptions {
   maxRetryDelayMs?: number | undefined;
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
-  unsignableHeaders?: Iterable<string> | undefined;
+  unsignableHeaders?: (object & Iterable<string>) | undefined;
   doubleUrlEncode?: boolean | undefined;
-  fetch?: typeof fetch | undefined;
+  fetch?: ((request: Request) => Promise<Response>) | undefined;
 }
 
 export interface SignAwsRequestOptions {
@@ -28,11 +28,12 @@ export interface SignAwsRequestOptions {
   url: string | URL;
   headers?: HeadersInit | undefined;
   body?: BodyInit | null | undefined;
+  signal?: AbortSignal | null | undefined;
   cache?: SigningKeyCache | undefined;
   signingDate?: string | Date | undefined;
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
-  unsignableHeaders?: Iterable<string> | undefined;
+  unsignableHeaders?: (object & Iterable<string>) | undefined;
   doubleUrlEncode?: boolean | undefined;
 }
 
@@ -42,6 +43,7 @@ export interface SigningKeyCache {
 }
 
 export type SigV4RequestInit = RequestInit & {
+  duplex?: "half" | undefined;
   signing?: SigV4RequestSigningOptions | undefined;
 };
 
@@ -51,7 +53,7 @@ export interface SigV4RequestSigningOptions {
   signingDate?: string | Date | undefined;
   unsignedPayload?: boolean | undefined;
   signAllHeaders?: boolean | undefined;
-  unsignableHeaders?: Iterable<string> | undefined;
+  unsignableHeaders?: (object & Iterable<string>) | undefined;
   doubleUrlEncode?: boolean | undefined;
 }
 

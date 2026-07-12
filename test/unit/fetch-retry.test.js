@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { FIXED_AMZ_DATE, LAMBDA_ENDPOINT, lambdaClient, lambdaRequest } from "./helpers.js";
+import { FIXED_AMZ_DATE, LAMBDA_ENDPOINT, S3_ENDPOINT, lambdaClient, lambdaRequest, s3Client } from "./helpers.js";
 test("SigV4Client.fetch retries transient fetch rejections", async () => {
   let calls = 0;
   const client = lambdaClient({
@@ -316,29 +316,30 @@ test("SigV4Client.fetch cancels retryable response bodies before retrying", asyn
 });
 
 test("SigV4Client.fetch reuses signed payload hashes across retries", async () => {
-  let reads = 0;
-  class CountingBlob extends Blob {
-    async arrayBuffer() {
-      reads += 1;
-      return super.arrayBuffer();
-    }
-  }
   let calls = 0;
+  const bodies = [];
+  const hashes = [];
   const client = lambdaClient({
     retries: 1,
     initialRetryDelayMs: 0,
-    fetch: async () => {
+    fetch: async (request) => {
       calls += 1;
+      bodies.push(await request.clone().text());
+      hashes.push(request.headers.get("x-amz-content-sha256"));
       return new Response("ok", { status: calls === 1 ? 500 : 200 });
     },
   });
   const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
     method: "PUT",
-    body: new CountingBlob(["hello"]),
+    body: new Blob(["hello"]),
     signing: { signingDate: FIXED_AMZ_DATE },
   });
   assert.equal(response.status, 200);
-  assert.equal(reads, 1);
+  assert.deepEqual(bodies, ["hello", "hello"]);
+  assert.deepEqual(hashes, [
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+  ]);
 });
 
 test("SigV4Client.fetch retries ReadableStream bodies", async () => {
@@ -394,6 +395,70 @@ test("SigV4Client.fetch retries Request ReadableStream bodies", async () => {
   assert.deepEqual(bodies, ["hello", "hello"]);
 });
 
+test("SigV4Client.fetch snapshots mutable unsigned bodies before retrying", async () => {
+  const cases = [
+    {
+      name: "Uint8Array",
+      body: new TextEncoder().encode("before"),
+      mutate(body) {
+        body.fill(120);
+      },
+      expected: "before",
+    },
+    {
+      name: "URLSearchParams",
+      body: new URLSearchParams({ state: "before" }),
+      mutate(body) {
+        body.set("state", "after");
+      },
+      expected: "state=before",
+    },
+  ];
+  for (const fixture of cases) {
+    const bodies = [];
+    const client = s3Client({
+      retries: 1,
+      initialRetryDelayMs: 0,
+      fetch: async (request) => {
+        bodies.push(await request.clone().text());
+        fixture.mutate(fixture.body);
+        return new Response("ok", { status: bodies.length === 1 ? 500 : 200 });
+      },
+    });
+    const response = await client.fetch(`${S3_ENDPOINT}/example-bucket/replay-${fixture.name}`, {
+      method: "PUT",
+      body: fixture.body,
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(response.status, 200, fixture.name);
+    assert.deepEqual(bodies, [fixture.expected, fixture.expected], fixture.name);
+  }
+});
+
+test("SigV4Client.fetch replays unsigned Blob bodies with their content-type signed", async () => {
+  const bodies = [];
+  const client = s3Client({
+    retries: 1,
+    initialRetryDelayMs: 0,
+    fetch: async (request) => {
+      bodies.push(await request.text());
+      assert.equal(request.headers.get("content-type"), "text/plain");
+      assert.match(
+        request.headers.get("authorization") || "",
+        /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
+      );
+      return new Response("ok", { status: bodies.length === 1 ? 500 : 200 });
+    },
+  });
+  const response = await client.fetch(`${S3_ENDPOINT}/example-bucket/blob-replay.txt`, {
+    method: "PUT",
+    body: new Blob(["stable"], { type: "text/plain" }),
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(bodies, ["stable", "stable"]);
+});
+
 test("SigV4Client.fetch caps exponential retry delay", async () => {
   const originalRandom = Math.random;
   const originalSetTimeout = globalThis.setTimeout;
@@ -416,6 +481,70 @@ test("SigV4Client.fetch caps exponential retry delay", async () => {
     });
     assert.equal(response.status, 500);
     assert.deepEqual(delays, [7, 7]);
+  } finally {
+    Math.random = originalRandom;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("SigV4Client.fetch applies full jitter to exponential retry delays", async () => {
+  const originalRandom = Math.random;
+  const originalSetTimeout = globalThis.setTimeout;
+  const delays = [];
+  try {
+    Math.random = () => 0.25;
+    globalThis.setTimeout = (callback, delay) => {
+      delays.push(delay);
+      callback();
+      return 0;
+    };
+    const client = lambdaClient({
+      retries: 3,
+      initialRetryDelayMs: 40,
+      maxRetryDelayMs: 1_000,
+      fetch: async () => new Response("retry", { status: 500 }),
+    });
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(delays, [10, 20, 40]);
+  } finally {
+    Math.random = originalRandom;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("SigV4Client.fetch applies full jitter after transient fetch rejections", async () => {
+  const originalRandom = Math.random;
+  const originalSetTimeout = globalThis.setTimeout;
+  const delays = [];
+  let calls = 0;
+  try {
+    Math.random = () => 0.25;
+    globalThis.setTimeout = (callback, delay) => {
+      delays.push(delay);
+      callback();
+      return 0;
+    };
+    const client = lambdaClient({
+      retries: 3,
+      initialRetryDelayMs: 40,
+      maxRetryDelayMs: 1_000,
+      fetch: async () => {
+        calls += 1;
+        throw new TypeError("socket reset");
+      },
+    });
+    await assert.rejects(
+      () =>
+        client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      /socket reset/
+    );
+    assert.equal(calls, 4);
+    assert.deepEqual(delays, [10, 20, 40]);
   } finally {
     Math.random = originalRandom;
     globalThis.setTimeout = originalSetTimeout;
@@ -458,6 +587,89 @@ test("SigV4Client rejects negative retries", () => {
       }),
     /retries must be a non-negative integer/
   );
+});
+
+test("SigV4Client rejects retries outside the safe integer range", () => {
+  for (const retries of [Number.MAX_SAFE_INTEGER + 1, Infinity, 1.5]) {
+    assert.throws(
+      () => lambdaClient({ retries }),
+      /retries must be a non-negative integer within the safe integer range/
+    );
+  }
+});
+
+test("SigV4Client rejects invalid retry delay bounds", () => {
+  for (const name of ["initialRetryDelayMs", "maxRetryDelayMs"]) {
+    for (const value of [-1, Number.NaN, Infinity]) {
+      assert.throws(() => lambdaClient({ [name]: value }), new RegExp(`${name} must be a non-negative finite number`));
+    }
+  }
+});
+
+test("SigV4Client rejects null retry configuration", () => {
+  const expectations = {
+    retries: /retries must be a non-negative integer within the safe integer range/,
+    initialRetryDelayMs: /initialRetryDelayMs must be a non-negative finite number/,
+    maxRetryDelayMs: /maxRetryDelayMs must be a non-negative finite number/,
+  };
+  for (const [name, expected] of Object.entries(expectations)) {
+    assert.throws(() => lambdaClient({ [name]: null }), expected);
+  }
+});
+
+test("SigV4Client.fetch preserves an explicit null abort reason", async () => {
+  const controller = new AbortController();
+  controller.abort(null);
+  let caught = Symbol("not caught");
+  try {
+    await lambdaClient().fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signal: controller.signal,
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(caught, null);
+});
+
+test("SigV4Client.fetch aborts while retry response cancellation is stalled", { timeout: 2_000 }, async () => {
+  let cancelStartedResolve;
+  const cancelStarted = new Promise((resolve) => {
+    cancelStartedResolve = resolve;
+  });
+  const controller = new AbortController();
+  const reason = { code: "stop-response-cancellation" };
+  let fetchCalls = 0;
+  const client = lambdaClient({
+    retries: 1,
+    initialRetryDelayMs: 0,
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response(
+        new ReadableStream({
+          cancel() {
+            cancelStartedResolve();
+            return new Promise(() => {});
+          },
+        }),
+        { status: 500 }
+      );
+    },
+  });
+  const pending = client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signal: controller.signal,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  await cancelStarted;
+  controller.abort(reason);
+  let caught;
+  try {
+    await pending;
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(caught, reason);
+  assert.equal(fetchCalls, 1);
 });
 
 test("SigV4Client.fetch rejects invalid HTTP methods before retry planning", async () => {

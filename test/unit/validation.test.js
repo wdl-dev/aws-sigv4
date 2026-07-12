@@ -8,13 +8,11 @@ import { SigV4Client, signAwsRequest } from "../../dist/index.js";
 
 import {
   ACCESS_KEY_ID,
-  EXECUTE_API_ENDPOINT,
   FIXED_AMZ_DATE,
   LAMBDA_ENDPOINT,
   S3_ENDPOINT,
   SECRET_ACCESS_KEY,
   assertHelloStreamReadable,
-  executeApiClient,
   helloStream,
   lambdaClient,
   lambdaRequest,
@@ -36,12 +34,13 @@ test("signingDate accepts Date objects", async () => {
 
 test("default signingDate is captured after body preparation", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-06-16T01:02:01Z") });
-  class TimeChangingBlob extends Blob {
-    async arrayBuffer() {
+  const body = new ReadableStream({
+    pull(controller) {
       t.mock.timers.setTime(new Date("2026-06-16T01:02:03Z").getTime());
-      return super.arrayBuffer();
-    }
-  }
+      controller.enqueue(new TextEncoder().encode("hello"));
+      controller.close();
+    },
+  });
   const signed = await signAwsRequest({
     accessKeyId: ACCESS_KEY_ID,
     secretAccessKey: SECRET_ACCESS_KEY,
@@ -49,7 +48,7 @@ test("default signingDate is captured after body preparation", async (t) => {
     region: "ap-northeast-1",
     method: "POST",
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    body: new TimeChangingBlob(["hello"]),
+    body,
   });
   assert.equal(signed.headers.get("x-amz-date"), FIXED_AMZ_DATE);
 });
@@ -66,12 +65,13 @@ test("null signingDate uses the default clock", async (t) => {
 
 test("explicit signingDate Date objects are captured before body preparation", async () => {
   const signingDate = new Date("2026-06-16T01:02:03.000Z");
-  class TimeChangingBlob extends Blob {
-    async arrayBuffer() {
+  const body = new ReadableStream({
+    pull(controller) {
       signingDate.setTime(Date.UTC(2027, 0, 1, 0, 0, 0));
-      return super.arrayBuffer();
-    }
-  }
+      controller.enqueue(new TextEncoder().encode("hello"));
+      controller.close();
+    },
+  });
   const signed = await signAwsRequest({
     accessKeyId: ACCESS_KEY_ID,
     secretAccessKey: SECRET_ACCESS_KEY,
@@ -80,52 +80,9 @@ test("explicit signingDate Date objects are captured before body preparation", a
     method: "POST",
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
     signingDate,
-    body: new TimeChangingBlob(["hello"]),
+    body,
   });
   assert.equal(signed.headers.get("x-amz-date"), FIXED_AMZ_DATE);
-});
-
-test("signingDate ignores Date subclass toISOString overrides", async () => {
-  class BadDate extends Date {
-    toISOString() {
-      return "BAD";
-    }
-  }
-  const signed = await lambdaRequest({
-    method: "GET",
-    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    signingDate: new BadDate("2026-06-16T01:02:03.000Z"),
-  });
-  assert.equal(signed.headers.get("x-amz-date"), FIXED_AMZ_DATE);
-});
-
-test("signingDate rejects Date subclasses with invalid primitive time", async () => {
-  class BadDate extends Date {
-    getTime() {
-      return 0;
-    }
-  }
-  await assert.rejects(
-    () =>
-      lambdaRequest({
-        method: "GET",
-        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-        signingDate: new BadDate("not-a-date"),
-      }),
-    /signingDate must be a valid Date/
-  );
-});
-
-test("signingDate rejects Date prototype objects with a stable message", async () => {
-  await assert.rejects(
-    () =>
-      lambdaRequest({
-        method: "GET",
-        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-        signingDate: Object.create(Date.prototype),
-      }),
-    /signingDate must be a valid Date/
-  );
 });
 
 test("signingDate accepts ISO-8601 strings", async () => {
@@ -246,6 +203,26 @@ test("signing rejects non-HTTP URLs", async () => {
   );
 });
 
+test("signers reject missing or non-object option bags", async () => {
+  for (const options of [undefined, null, "invalid"]) {
+    assert.throws(() => new SigV4Client(options), /SigV4Client options are required/);
+    await assert.rejects(() => signAwsRequest(options), /signAwsRequest options are required/);
+  }
+});
+
+test("signAwsRequest rejects a missing URL", async () => {
+  await assert.rejects(
+    () =>
+      signAwsRequest({
+        accessKeyId: ACCESS_KEY_ID,
+        secretAccessKey: SECRET_ACCESS_KEY,
+        service: "lambda",
+        region: "ap-northeast-1",
+      }),
+    /url is a required option/
+  );
+});
+
 test("signing rejects string URLs with unescaped whitespace", async () => {
   await assert.rejects(
     () =>
@@ -255,6 +232,25 @@ test("signing rejects string URLs with unescaped whitespace", async () => {
       }),
     /url must not contain unescaped whitespace/
   );
+});
+
+test("signing rejects raw C0 and DEL control characters in string URLs", async () => {
+  const controls = [...Array.from({ length: 0x20 }, (_value, codePoint) => codePoint), 0x7f];
+  for (const codePoint of controls) {
+    const control = String.fromCodePoint(codePoint);
+    for (const url of [
+      `${control}${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      `${LAMBDA_ENDPOINT}/2025-09-09/a${control}b`,
+      `${LAMBDA_ENDPOINT}/2025-09-09/microvms${control}`,
+      `${LAMBDA_ENDPOINT}/2025-09-09/microvms?token=a${control}b`,
+      `${LAMBDA_ENDPOINT}/2025-09-09/microvms?token=value${control}`,
+    ]) {
+      await assert.rejects(
+        () => lambdaRequest({ method: "GET", url }),
+        /url must not contain unescaped whitespace or control characters/
+      );
+    }
+  }
 });
 
 test("signing rejects string URLs without scheme slashes", async () => {
@@ -343,6 +339,72 @@ test("signing rejects invalid UTF-16 in string URLs", async () => {
   }
 });
 
+test("SigV4Client does not replace explicitly invalid duplex values", async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.close();
+    },
+  });
+  await assert.rejects(
+    () =>
+      s3Client().sign(`${S3_ENDPOINT}/example-bucket/duplex.txt`, {
+        method: "PUT",
+        body,
+        duplex: "bogus",
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /bogus.*half/iu
+  );
+});
+
+test("signing rejects invalid falsy headers instead of treating them as absent", async () => {
+  let fetchCalls = 0;
+  const client = lambdaClient({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("unreachable");
+    },
+  });
+  const request = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`);
+  for (const headers of [null, false, 0, ""]) {
+    await assert.rejects(
+      () =>
+        lambdaRequest({
+          method: "GET",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          headers,
+        }),
+      TypeError
+    );
+    await assert.rejects(
+      () =>
+        client.sign(request, {
+          headers,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      TypeError
+    );
+    await assert.rejects(
+      () =>
+        client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          headers,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      TypeError
+    );
+  }
+  assert.equal(fetchCalls, 0);
+});
+
+test("SigV4Client follows the Web IDL RequestInit object boundary", async () => {
+  const client = lambdaClient();
+  const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, null);
+  assert.equal(signed.method, "GET");
+  for (const init of [false, 0, ""]) {
+    await assert.rejects(() => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init), /init must be an object/);
+  }
+});
+
 test("signing ignores invalid UTF-16 in string URL fragments", async () => {
   const signed = await lambdaRequest({
     method: "GET",
@@ -413,6 +475,52 @@ test("signing rejects invalid HTTP methods", async () => {
         }),
       /method must be a valid HTTP token/
     );
+  }
+});
+
+test("SigV4Client rejects Fetch-forbidden methods before consuming bodies", async () => {
+  for (const method of ["CONNECT", "TRACE", "TRACK"]) {
+    const signBody = helloStream();
+    await assert.rejects(
+      () =>
+        lambdaClient().sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          method,
+          body: signBody,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      new RegExp(`Fetch-forbidden method ${method}`)
+    );
+    await assertHelloStreamReadable(signBody);
+
+    let fetchCalls = 0;
+    const fetchBody = helloStream();
+    const client = lambdaClient({
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("unreachable");
+      },
+    });
+    await assert.rejects(
+      () =>
+        client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          method,
+          body: fetchBody,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      new RegExp(`Fetch-forbidden method ${method}`)
+    );
+    assert.equal(fetchCalls, 0);
+    await assertHelloStreamReadable(fetchBody);
+  }
+});
+
+test("signAwsRequest continues to support Fetch-forbidden methods for custom transports", async () => {
+  for (const method of ["CONNECT", "TRACE", "TRACK"]) {
+    const signed = await lambdaRequest({
+      method,
+      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    });
+    assert.equal(signed.method, method);
   }
 });
 
@@ -722,38 +830,6 @@ test("SigV4Client treats null service region and signingDate as defaults", async
     signed.headers.get("authorization") || "",
     /Credential=AKIDEXAMPLE\/20260616\/ap-northeast-1\/lambda\/aws4_request/
   );
-});
-
-test("SigV4Client ignores inherited signing options", async (t) => {
-  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-06-16T01:02:03Z") });
-  const signing = Object.create({
-    service: "lambda",
-    region: "us-east-1",
-    signingDate: "20270101T000000Z",
-    unsignedPayload: true,
-    signAllHeaders: true,
-    unsignableHeaders: ["x-extra"],
-    doubleUrlEncode: true,
-  });
-  const url = `${EXECUTE_API_ENDPOINT}/prod/my+folder/a%2Fb/%7E`;
-  const init = {
-    method: "GET",
-    headers: {
-      "user-agent": "fixture-agent",
-      "x-extra": "keep-me",
-    },
-  };
-  const expected = await executeApiClient().sign(url, {
-    ...init,
-    signing: { signingDate: FIXED_AMZ_DATE },
-  });
-  const signed = await executeApiClient().sign(url, {
-    ...init,
-    signing,
-  });
-  assert.equal(signed.headers.get("x-amz-date"), FIXED_AMZ_DATE);
-  assert.equal(signed.headers.get("x-amz-content-sha256"), expected.headers.get("x-amz-content-sha256"));
-  assert.equal(signed.headers.get("authorization"), expected.headers.get("authorization"));
 });
 
 test("signing rejects non-boolean signing options", async () => {

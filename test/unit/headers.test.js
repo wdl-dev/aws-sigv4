@@ -84,6 +84,24 @@ test("signing rejects non-printable signed header values without consuming strea
   await assertHelloStreamReadable(body);
 });
 
+test("mandatory AWS header exclusions are rejected before consuming stream bodies", async () => {
+  const body = helloStream();
+  await assert.rejects(
+    () =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        headers: {
+          "x-amz-meta-owner": "alice",
+        },
+        body,
+        unsignableHeaders: ["x-amz-meta-owner"],
+      }),
+    /mandatory signed header x-amz-meta-owner/
+  );
+  await assertHelloStreamReadable(body);
+});
+
 test("signing ignores non-printable unsignable header values", async () => {
   const signed = await lambdaRequest({
     method: "GET",
