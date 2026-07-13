@@ -86,6 +86,40 @@ test("SigV4Client.sign supports ReadableStream bodies", async () => {
   assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;x-amz-content-sha256;x-amz-date/);
 });
 
+test("payload hashing rejects disturbed ReadableStream bodies without consuming remaining bytes", async () => {
+  for (const consumeAll of [false, true]) {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("part1"));
+        controller.enqueue(new TextEncoder().encode("part2"));
+        controller.close();
+      },
+    });
+    const reader = body.getReader();
+    assert.equal(new TextDecoder().decode((await reader.read()).value), "part1");
+    if (consumeAll) {
+      assert.equal(new TextDecoder().decode((await reader.read()).value), "part2");
+    }
+    reader.releaseLock();
+
+    await assert.rejects(
+      () =>
+        lambdaRequest({
+          method: "POST",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          body,
+        }),
+      /ReadableStream body must not be disturbed or locked/
+    );
+    assert.equal(body.locked, false);
+    if (!consumeAll) {
+      const remainingReader = body.getReader();
+      assert.equal(new TextDecoder().decode((await remainingReader.read()).value), "part2");
+      remainingReader.releaseLock();
+    }
+  }
+});
+
 test("payload hashing cancels streams that yield invalid chunks", async () => {
   let cancelReason;
   const body = new ReadableStream({
@@ -268,6 +302,74 @@ test("body materialization cancels promptly and preserves the exact abort reason
   assert.equal(caught, reason);
   assert.equal(cancelReason, reason);
   assert.equal(fetchCalls, 0);
+});
+
+test("signAwsRequest rejects pre-aborted body materialization without reading the stream", async () => {
+  let pulls = 0;
+  const body = new ReadableStream(
+    {
+      pull() {
+        pulls += 1;
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const controller = new AbortController();
+  const reason = { code: "signing-pre-aborted" };
+  controller.abort(reason);
+  let caught;
+  try {
+    await lambdaRequest({
+      method: "POST",
+      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      body,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught, reason);
+  assert.equal(pulls, 0);
+  assert.equal(body.locked, false);
+});
+
+test("signAwsRequest aborts stream materialization with the exact reason", { timeout: 2_000 }, async () => {
+  let readStartedResolve;
+  const readStarted = new Promise((resolve) => {
+    readStartedResolve = resolve;
+  });
+  let cancelReason;
+  const body = new ReadableStream(
+    {
+      pull() {
+        readStartedResolve();
+        return new Promise(() => {});
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const controller = new AbortController();
+  const reason = { code: "stop-direct-signing" };
+  const pending = lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    body,
+    signal: controller.signal,
+  });
+  await readStarted;
+  controller.abort(reason);
+  let caught;
+  try {
+    await pending;
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught, reason);
+  assert.equal(cancelReason, reason);
+  assert.equal(body.locked, false);
 });
 
 test("fetch body materialization inherits a Request input signal", async () => {

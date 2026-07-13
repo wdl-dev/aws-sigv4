@@ -74,6 +74,7 @@ async function prepareBody(
     return { body };
   }
   if (body instanceof ReadableStream) {
+    assertReadableStreamUsable(body);
     const bytes = await readStreamBytes(body, signal);
     return { body: bytes, bytes };
   }
@@ -130,6 +131,17 @@ async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Arr
     return new Uint8Array(await body.arrayBuffer());
   }
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
+}
+
+function assertReadableStreamUsable(body: ReadableStream): void {
+  try {
+    void new Response(body);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new TypeError("ReadableStream body must not be disturbed or locked", { cause: error });
+    }
+    throw error;
+  }
 }
 
 async function readStreamBytes(

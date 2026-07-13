@@ -228,9 +228,12 @@ preserve manual redirect mode. The effective signal covers body preparation,
 transport, response cleanup, and retry waits, with no implicit deadline. Use
 `AbortSignal.timeout()` when needed.
 
-Only standard Request state can be copied. Runtime extensions such as undici's
-`dispatcher` should be captured by the transport closure, for example
-`fetch: (request) => fetch(request, { dispatcher })`, or handled by a separate
+Only standard Request state is copied. Runtime-specific fetch options, such as
+undici's `dispatcher`, are not represented by the Web `Request` API and cannot be
+recovered from an input request when it is rebuilt for signing. Unknown init
+fields are outside the supported contract even if a runtime currently forwards
+them. Capture extensions in the transport closure, for example
+`fetch: (request) => fetch(request, { dispatcher })`, or handle them in a separate
 client after calling `signAwsRequest()`.
 
 ## API reference

@@ -10,11 +10,65 @@ const FIXED_AMZ_DATE = "20260616T010203Z";
 export default {
   async test() {
     await assertGoldenSignature();
+    await assertS3RequestSignature();
+    await assertDisturbedStreamRejected();
     await assertClientFetch();
     await assertSourceSignalPropagation();
     await assertFetchIgnoresSignOverride();
   },
 };
+
+async function assertS3RequestSignature() {
+  const client = new SigV4Client({
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "s3",
+    region: "us-east-1",
+  });
+  const request = await client.sign("https://s3.us-east-1.amazonaws.com/example-bucket/objects/a%2Fb+name.txt", {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assertEqual(request instanceof Request, true, "S3 signed Request");
+  assertEqual(request.url, "https://s3.us-east-1.amazonaws.com/example-bucket/objects/a%2Fb+name.txt", "S3 signed URL");
+  assertEqual(request.headers.get("x-amz-content-sha256"), "UNSIGNED-PAYLOAD", "S3 payload hash");
+  assertEqual(
+    request.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=339773363fd76d12a21c35f2b97ea2cce1c9ccafb005e3e61c4dfea884ec7ea4",
+    "S3 authorization"
+  );
+}
+
+async function assertDisturbedStreamRejected() {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("part1"));
+      controller.enqueue(new TextEncoder().encode("part2"));
+      controller.close();
+    },
+  });
+  const reader = body.getReader();
+  await reader.read();
+  reader.releaseLock();
+  let caught;
+  try {
+    await signAwsRequest({
+      accessKeyId: ACCESS_KEY_ID,
+      secretAccessKey: SECRET_ACCESS_KEY,
+      service: "lambda",
+      region: "ap-northeast-1",
+      method: "POST",
+      url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
+      body,
+      signingDate: FIXED_AMZ_DATE,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof TypeError) || caught.message !== "ReadableStream body must not be disturbed or locked") {
+    throw new Error(`disturbed stream error: received ${String(caught)}`);
+  }
+  assertEqual(body.locked, false, "disturbed stream lock state");
+}
 
 async function assertGoldenSignature() {
   const signed = await signAwsRequest({

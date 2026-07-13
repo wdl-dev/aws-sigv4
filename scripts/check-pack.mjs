@@ -145,8 +145,17 @@ function run(command, args, cwd) {
     throw commandResult.error;
   }
   if (commandResult.status !== 0) {
+    process.stdout.write(commandResult.stdout);
     process.stderr.write(commandResult.stderr);
-    throw new Error(`${args.slice(1, 3).join(" ")} failed with exit code ${commandResult.status ?? "unknown"}`);
+    throw new Error(`${commandLabel(command, args)} failed with exit code ${commandResult.status ?? "unknown"}`);
   }
   return commandResult;
+}
+
+function commandLabel(command, args) {
+  if (command !== process.execPath || args.length === 0) {
+    return command;
+  }
+  const subcommand = args[1] && !args[1].startsWith("-") ? ` ${args[1]}` : "";
+  return `${args[0]}${subcommand}`;
 }

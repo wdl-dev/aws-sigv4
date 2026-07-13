@@ -7,6 +7,7 @@ import { rejectNonPrintableAscii } from "./validation.js";
 
 const AUTH_PARAM_SEPARATOR_RE = /[,=;]/u;
 const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/u;
+const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const WHITESPACE_RE = /\s/u;
 
 const CLIENT_SIGNING_OPTION_KEYS = new Set([
@@ -186,6 +187,9 @@ export function normalizeUnsignableHeaders(value: unknown, name: string): string
   return [...(value as Iterable<unknown>)].map((header) => {
     if (typeof header !== "string" || header.length === 0) {
       throw new TypeError(`${name} must contain only non-empty strings`);
+    }
+    if (!HEADER_NAME_RE.test(header)) {
+      throw new TypeError(`${name} must contain only valid header names`);
     }
     return header;
   });

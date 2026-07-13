@@ -45,6 +45,26 @@ test("external signing key caches reuse entries for matching credential scopes",
   assert.equal(cache.size, 1);
 });
 
+test("signAwsRequest skips the secret hash when no signing-key cache is used", async () => {
+  const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+  let secretDigestCalls = 0;
+  try {
+    crypto.subtle.digest = (algorithm, data) => {
+      if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
+        secretDigestCalls += 1;
+      }
+      return originalDigest(algorithm, data);
+    };
+    await lambdaRequest({
+      method: "GET",
+      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    });
+    assert.equal(secretDigestCalls, 0);
+  } finally {
+    crypto.subtle.digest = originalDigest;
+  }
+});
+
 test("SigV4Client does not cache rejected secret hash promises", async () => {
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   let secretDigestCalls = 0;

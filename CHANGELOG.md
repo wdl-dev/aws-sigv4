@@ -23,22 +23,29 @@ SPDX-License-Identifier: Apache-2.0
   overridden `sign()` method. Put logging, instrumentation, and transport policy
   in the custom transport instead.
 - Credential `service` and `region` values must be lowercase.
+- Request `x-amz-*` headers and S3 `content-md5` can no longer be excluded
+  through `unsignableHeaders`; attempted exclusions now throw a `TypeError`.
+- `unsignableHeaders` entries must be valid HTTP header names; malformed names
+  that were previously ineffective now throw a `TypeError`.
+- Retry counts must be non-negative safe integers. Retry counts and delay bounds
+  reject explicit `null` instead of treating it as a default.
 
 ### Added
 
 - `signAwsRequest()` now accepts a `signal`; cancellation covers body
   materialization and preserves the exact abort reason.
+- `SigV4RequestInit` now exposes `duplex?: "half"` for streaming request bodies.
 - CI now runs a smoke test on `workerd@1.20260701.1` with compatibility date
-  `2026-07-01`, covering a golden Lambda signature and signed fetch/retry flow.
+  `2026-07-01`, covering Lambda and S3 signatures, signed fetch/retry flow, and
+  caller-signal propagation.
 
 ### Changed
 
 - Signing and retries now use a stable snapshot of the effective target, request
   state, options, headers, and replayable body bytes. Later caller mutations do
-  not change the authenticated request, and retry attempts reuse the same bytes
-  without another full-size body copy.
-- Every request `x-amz-*` header and S3 `content-md5` header is mandatory signed
-  state and cannot be excluded through `unsignableHeaders`.
+  not change the authenticated request. Retry attempts reuse the materialized
+  body and payload hash without repeating library-level snapshotting, body
+  materialization, or hashing.
 - The custom transport type now reflects its runtime contract as
   `(request: Request) => Promise<Response>`; transports must honor the request
   signal and preserve manual redirect mode.
@@ -48,8 +55,6 @@ SPDX-License-Identifier: Apache-2.0
 - Client credentials and transport configuration now use native private fields.
   Concurrent cold-cache signing for the same credential scope shares one
   signing-key derivation.
-- Retry counts must be non-negative safe integers. Retry counts and delay bounds
-  reject explicit `null` instead of treating it as a default.
 
 ### Fixed
 

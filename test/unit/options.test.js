@@ -411,6 +411,34 @@ test("unsignableHeaders rejects null inputs", async () => {
   );
 });
 
+test("unsignableHeaders rejects invalid header names with an attributed error", async () => {
+  for (const header of ["x-debug only", "héader"]) {
+    await assert.rejects(
+      () =>
+        lambdaRequest({
+          method: "GET",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          unsignableHeaders: [header],
+        }),
+      /unsignableHeaders must contain only valid header names/
+    );
+    assert.throws(
+      () => lambdaClient({ unsignableHeaders: [header] }),
+      /unsignableHeaders must contain only valid header names/
+    );
+    await assert.rejects(
+      () =>
+        lambdaClient().sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          signing: {
+            signingDate: FIXED_AMZ_DATE,
+            unsignableHeaders: [header],
+          },
+        }),
+      /init\.signing\.unsignableHeaders must contain only valid header names/
+    );
+  }
+});
+
 test("SigV4Client snapshots unsignableHeaders iterables", async () => {
   function* headersToSkip() {
     yield "x-debug-only";

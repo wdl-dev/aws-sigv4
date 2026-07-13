@@ -8,11 +8,13 @@ import { SigV4Client, signAwsRequest } from "../../dist/index.js";
 
 import {
   ACCESS_KEY_ID,
+  EXECUTE_API_ENDPOINT,
   FIXED_AMZ_DATE,
   LAMBDA_ENDPOINT,
   S3_ENDPOINT,
   SECRET_ACCESS_KEY,
   assertHelloStreamReadable,
+  executeApiClient,
   helloStream,
   lambdaClient,
   lambdaRequest,
@@ -577,6 +579,39 @@ test("SigV4Client treats null service region and signingDate as defaults", async
     signed.headers.get("authorization") || "",
     /Credential=AKIDEXAMPLE\/20260616\/ap-northeast-1\/lambda\/aws4_request/
   );
+});
+
+test("SigV4Client ignores inherited signing options", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-06-16T01:02:03Z") });
+  const signing = Object.create({
+    service: "lambda",
+    region: "us-east-1",
+    signingDate: "20270101T000000Z",
+    unsignedPayload: true,
+    signAllHeaders: true,
+    unsignableHeaders: ["x-extra"],
+    doubleUrlEncode: true,
+  });
+  const url = `${EXECUTE_API_ENDPOINT}/prod/my+folder/a%2Fb/%7E`;
+  const init = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-extra": "keep-me",
+    },
+    body: "{}",
+  };
+  const expected = await executeApiClient().sign(url, {
+    ...init,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  const signed = await executeApiClient().sign(url, {
+    ...init,
+    signing,
+  });
+  assert.equal(signed.headers.get("x-amz-date"), FIXED_AMZ_DATE);
+  assert.equal(signed.headers.get("x-amz-content-sha256"), expected.headers.get("x-amz-content-sha256"));
+  assert.equal(signed.headers.get("authorization"), expected.headers.get("authorization"));
 });
 
 test("signing rejects non-boolean signing options", async () => {

@@ -19,20 +19,26 @@ interface SignatureOptions {
 const inFlightSigningKeys = new WeakMap<SigningKeyCache, Map<string, Promise<ArrayBuffer>>>();
 
 export async function signatureHex(options: SignatureOptions): Promise<string> {
-  const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
-  const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
-  let signingKey = options.cache?.get(cacheKey);
-  if (signingKey === undefined) {
-    signingKey = await deriveCachedSigningKey(options, cacheKey);
+  let signingKey: ArrayBuffer;
+  if (options.cache === undefined) {
+    signingKey = await deriveSigningKey(options);
+  } else {
+    const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
+    const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
+    const cachedSigningKey = options.cache.get(cacheKey);
+    signingKey =
+      cachedSigningKey === undefined
+        ? await deriveCachedSigningKey(options, options.cache, cacheKey)
+        : cachedSigningKey;
   }
   return hex(await hmac(signingKey, options.stringToSign));
 }
 
-async function deriveCachedSigningKey(options: SignatureOptions, cacheKey: string): Promise<ArrayBuffer> {
-  const cache = options.cache;
-  if (cache === undefined) {
-    return deriveSigningKey(options);
-  }
+async function deriveCachedSigningKey(
+  options: SignatureOptions,
+  cache: SigningKeyCache,
+  cacheKey: string
+): Promise<ArrayBuffer> {
   let byKey = inFlightSigningKeys.get(cache);
   if (byKey === undefined) {
     byKey = new Map();

@@ -134,3 +134,35 @@ test("SigV4Client.fetch preserves the source signal through transport", async ()
   assert.equal(transportSignal.aborted, true);
   assert.equal(transportSignal.reason, reason);
 });
+
+test("SigV4Client.fetch rejects and cancels responses returned after transport abort", async () => {
+  const controller = new AbortController();
+  const reason = { code: "transport-returned-after-abort" };
+  let cancellations = 0;
+  let fetchCalls = 0;
+  const client = lambdaClient({
+    fetch: async () => {
+      fetchCalls += 1;
+      controller.abort(reason);
+      return new Response(
+        new ReadableStream({
+          cancel() {
+            cancellations += 1;
+          },
+        })
+      );
+    },
+  });
+  let caught;
+  try {
+    await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signal: controller.signal,
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught, reason);
+  assert.equal(fetchCalls, 1);
+  assert.equal(cancellations, 1);
+});
