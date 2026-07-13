@@ -175,10 +175,12 @@ export class SigV4Client {
       }
       if (prepared.request.redirectPolicy === "manual" && response.redirected) {
         await cancelResponseBody(response, attemptSignal);
+        attemptSignal.throwIfAborted();
         throw new TypeError('SigV4Client.fetch custom transport followed a redirect despite redirect: "manual"');
       }
       if (prepared.request.redirectPolicy === "error" && isRedirectResponse(response)) {
         await cancelResponseBody(response, attemptSignal);
+        attemptSignal.throwIfAborted();
         throw new TypeError("SigV4Client.fetch received a redirect response; redirect targets must be re-signed");
       }
       const retryableResponse = retryableMethod && (response.status >= 500 || response.status === 429);

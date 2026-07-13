@@ -164,6 +164,66 @@ test("SigV4Client.fetch rejects redirect responses by default and returns them i
   assert.equal(response.headers.get("location"), "/next");
 });
 
+test("SigV4Client.fetch preserves aborts that settle with response cancellation", async () => {
+  const cases = [
+    {
+      name: "followed manual redirect",
+      init: { redirect: "manual" },
+      response() {
+        const response = new Response("followed");
+        Object.defineProperty(response, "redirected", { value: true });
+        return response;
+      },
+    },
+    {
+      name: "redirect response",
+      init: {},
+      response() {
+        return new Response("redirect", { status: 302, headers: { location: "/next" } });
+      },
+    },
+  ];
+  for (const testCase of cases) {
+    let cancelStartedResolve;
+    const cancelStarted = new Promise((resolve) => {
+      cancelStartedResolve = resolve;
+    });
+    let finishCancellation;
+    const cancellation = new Promise((resolve) => {
+      finishCancellation = resolve;
+    });
+    const controller = new AbortController();
+    const reason = { code: "stop-response-cancellation", case: testCase.name };
+    const client = lambdaClient({
+      fetch: async () => {
+        const response = testCase.response();
+        Object.defineProperty(response.body, "cancel", {
+          value: () => {
+            cancelStartedResolve();
+            return cancellation;
+          },
+        });
+        return response;
+      },
+    });
+    const pending = client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      ...testCase.init,
+      signal: controller.signal,
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    await cancelStarted;
+    finishCancellation();
+    queueMicrotask(() => queueMicrotask(() => queueMicrotask(() => controller.abort(reason))));
+    let caught;
+    try {
+      await pending;
+    } catch (err) {
+      caught = err;
+    }
+    assert.equal(caught, reason, testCase.name);
+  }
+});
+
 test("SigV4Client.fetch works when the runtime rejects Request redirect error", async () => {
   const OriginalRequest = globalThis.Request;
   try {

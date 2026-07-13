@@ -54,4 +54,5 @@ export async function cancelResponseBody(response: Response, signal: AbortSignal
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
+  signal.throwIfAborted();
 }
