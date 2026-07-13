@@ -178,10 +178,12 @@ and teeing it. A used body is rejected unless replaced. Treat the original input
 as consumed; construct independent requests from replayable bytes when both must
 remain usable.
 
-Mutable binary and URLSearchParams bodies are copied whenever hashing or retry
-replay requires stable bytes. Retries reuse that byte snapshot and its payload
-hash. Standard Blob bodies are immutable and can be reused directly when an
-existing payload hash or `UNSIGNED-PAYLOAD` avoids reading their bytes.
+Mutable binary and URLSearchParams bodies are always copied when an operation
+starts, including when an existing payload hash or `UNSIGNED-PAYLOAD` avoids
+hashing their bytes. Later caller mutations cannot change the request, and
+hashing and retries reuse that byte snapshot and its payload hash. Standard Blob
+bodies are immutable and can be reused directly when their bytes do not need to
+be hashed.
 
 Blob and ReadableStream bodies that require hashing, ReadableStream bodies that
 require replay, and all FormData bodies are fully buffered without a built-in
