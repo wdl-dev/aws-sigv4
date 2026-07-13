@@ -101,7 +101,7 @@ test("SigV4Client.fetch signs each retry attempt with the current time", async (
   assert.notEqual(seen[0].authorization, seen[1].authorization);
 });
 
-test("SigV4Client.fetch calls subclass and instance sign overrides for every attempt", async () => {
+test("SigV4Client.fetch calls sign overrides once and disables automatic retries", async () => {
   for (const overrideKind of ["subclass", "instance"]) {
     let calls = 0;
     let signCalls = 0;
@@ -140,10 +140,196 @@ test("SigV4Client.fetch calls subclass and instance sign overrides for every att
       body: "{}",
       signing: { signingDate: FIXED_AMZ_DATE },
     });
-    assert.equal(response.status, 200, overrideKind);
-    assert.equal(signCalls, 2, overrideKind);
+    assert.equal(response.status, 500, overrideKind);
+    assert.equal(calls, 1, overrideKind);
+    assert.equal(signCalls, 1, overrideKind);
   }
 });
+
+test(
+  "SigV4Client.fetch rejects redirect modes and cancels hook bodies before transport",
+  { timeout: 2_000 },
+  async () => {
+    let fetchCalls = 0;
+    const tracked = trackedCancellationStream();
+    const client = s3Client({
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("unreachable");
+      },
+    });
+    const defaultSign = client.sign;
+    client.sign = async function signWithFollowRedirect(input, init) {
+      const signed = await defaultSign.call(this, input, init);
+      return new Request(signed, { redirect: "follow" });
+    };
+
+    await assert.rejects(
+      () =>
+        client.fetch(`${S3_ENDPOINT}/example-bucket/redirect-hook`, {
+          method: "PUT",
+          body: tracked.body,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      /SigV4Client\.sign\(\) must return a Request with redirect: "manual"/
+    );
+    await tracked.cancelled;
+    assert.equal(fetchCalls, 0);
+    assert.equal(tracked.cancelCalls(), 1);
+    assert.match(tracked.cancelReason()?.message || "", /redirect: "manual"/);
+  }
+);
+
+test(
+  "SigV4Client.fetch rejects no-cors modes and cancels hook bodies before transport",
+  { timeout: 2_000 },
+  async () => {
+    let fetchCalls = 0;
+    const tracked = trackedCancellationStream();
+    const client = s3Client({
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("unreachable");
+      },
+    });
+    const defaultSign = client.sign;
+    client.sign = async function signWithNoCorsMode(input, init) {
+      const signed = await defaultSign.call(this, input, init);
+      Object.defineProperty(signed, "mode", { value: "no-cors" });
+      return signed;
+    };
+
+    await assert.rejects(
+      () =>
+        client.fetch(`${S3_ENDPOINT}/example-bucket/no-cors-hook`, {
+          method: "POST",
+          body: tracked.body,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      /cannot sign requests with mode "no-cors"/
+    );
+    await tracked.cancelled;
+    assert.equal(fetchCalls, 0);
+    assert.equal(tracked.cancelCalls(), 1);
+    assert.match(tracked.cancelReason()?.message || "", /mode "no-cors"/);
+  }
+);
+
+test("SigV4Client.fetch preserves the source signal when a sign override drops it", async () => {
+  const controller = new AbortController();
+  const reason = { code: "source-aborted" };
+  let transportSignal;
+  let releaseTransport;
+  let transportStartedResolve;
+  const transportStarted = new Promise((resolve) => {
+    transportStartedResolve = resolve;
+  });
+  const transportRelease = new Promise((resolve) => {
+    releaseTransport = resolve;
+  });
+  const client = lambdaClient({
+    fetch: async (request) => {
+      transportSignal = request.signal;
+      transportStartedResolve();
+      await transportRelease;
+      if (request.signal.aborted) {
+        throw request.signal.reason;
+      }
+      return new Response("unexpected");
+    },
+  });
+  const defaultSign = client.sign;
+  client.sign = async function signWithoutSourceSignal(input, init) {
+    const signed = await defaultSign.call(this, input, init);
+    return new Request(signed, { signal: null });
+  };
+
+  const pending = client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signal: controller.signal,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  await transportStarted;
+  controller.abort(reason);
+  releaseTransport();
+  await assert.rejects(pending, (error) => error === reason);
+  assert.equal(transportSignal.aborted, true);
+  assert.equal(transportSignal.reason, reason);
+});
+
+test(
+  "SigV4Client.fetch cancels hook bodies when the source signal aborts before transport",
+  { timeout: 2_000 },
+  async () => {
+    const controller = new AbortController();
+    const reason = { code: "abort-before-transport" };
+    const tracked = trackedCancellationStream();
+    let fetchCalls = 0;
+    const client = s3Client({
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("unreachable");
+      },
+    });
+    const defaultSign = client.sign;
+    client.sign = async function abortAfterSigning(input, init) {
+      const signed = await defaultSign.call(this, input, init);
+      controller.abort(reason);
+      return new Request(signed, { signal: null });
+    };
+
+    await assert.rejects(
+      () =>
+        client.fetch(`${S3_ENDPOINT}/example-bucket/aborted-hook`, {
+          method: "PUT",
+          body: tracked.body,
+          signal: controller.signal,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      (error) => error === reason
+    );
+    await tracked.cancelled;
+    assert.equal(fetchCalls, 0);
+    assert.equal(tracked.cancelCalls(), 1);
+    assert.equal(tracked.cancelReason(), reason);
+  }
+);
+
+test(
+  "SigV4Client.fetch cancels hook bodies when the returned signal is already aborted",
+  { timeout: 2_000 },
+  async () => {
+    const controller = new AbortController();
+    const reason = { code: "hook-aborted" };
+    const tracked = trackedCancellationStream();
+    let fetchCalls = 0;
+    const client = s3Client({
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("unreachable");
+      },
+    });
+    const defaultSign = client.sign;
+    client.sign = async function returnAbortedRequest(input, init) {
+      const signed = await defaultSign.call(this, input, init);
+      controller.abort(reason);
+      return new Request(signed, { signal: controller.signal });
+    };
+
+    await assert.rejects(
+      () =>
+        client.fetch(`${S3_ENDPOINT}/example-bucket/hook-aborted`, {
+          method: "PUT",
+          body: tracked.body,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      (error) => error === reason
+    );
+    await tracked.cancelled;
+    assert.equal(fetchCalls, 0);
+    assert.equal(tracked.cancelCalls(), 1);
+    assert.equal(tracked.cancelReason(), reason);
+  }
+);
 
 test("SigV4Client.fetch snapshots URL objects across asynchronous work and retries", async () => {
   const originalUrl = `${LAMBDA_ENDPOINT}/2025-09-09/original`;
@@ -780,3 +966,25 @@ test("SigV4Client.fetch preserves Request content-type when init overrides body"
   assert.equal(fetched.headers.get("content-type"), "application/json");
   assert.equal(fetched.headers.get("authorization"), signed.headers.get("authorization"));
 });
+
+function trackedCancellationStream() {
+  let calls = 0;
+  let reason;
+  let cancelledResolve;
+  const cancelled = new Promise((resolve) => {
+    cancelledResolve = resolve;
+  });
+  const body = new ReadableStream({
+    cancel(value) {
+      calls += 1;
+      reason = value;
+      cancelledResolve();
+    },
+  });
+  return {
+    body,
+    cancelled,
+    cancelCalls: () => calls,
+    cancelReason: () => reason,
+  };
+}

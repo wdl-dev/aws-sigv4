@@ -194,7 +194,11 @@ export class SigV4Client {
     rejectRequestBodyForGetHead(method, requestBodyForInput(requestInput, requestInit));
     const service = requestInit.signing.service ?? this.#service;
     assertParsedRequestCanRepresentSignedUrl(requestUrl.pathname, service);
-    const replayBody = this.#retries > 0 && isIdempotentMethod(method);
+    // Freeze the hook choice before asynchronous body preparation.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const sign = this.sign;
+    const usesDefaultSign = sign === defaultSigV4ClientSign;
+    const replayBody = usesDefaultSign && this.#retries > 0 && isIdempotentMethod(method);
     const reusableRequest = await reusableRequestInitForInput(requestInput, requestInit, {
       defaultService: this.#service,
       defaultUnsignedPayload: this.#unsignedPayload,
@@ -203,28 +207,30 @@ export class SigV4Client {
       hasClientSessionToken: this.#sessionToken !== undefined,
       replayBody,
     });
-    let publicSignRequired = false;
+    const sourceSignal = reusableRequest.init.signal ?? undefined;
     for (let attempt = 0; attempt <= this.#retries; attempt += 1) {
       const fetchFn = this.#fetchFn;
-      // Capture for identity comparison and restore the receiver with call() below.
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      const sign = this.sign;
-      if (sign !== defaultSigV4ClientSign) {
-        publicSignRequired = true;
-        reusableRequest.preparedBody = undefined;
+      let request = usesDefaultSign
+        ? await this.#sign(signingInput, reusableRequest.init, reusableRequest.preparedBody)
+        : await sign.call(this, signingInput, reusableRequest.init);
+      let attemptSignal = validateRequestBeforeTransport(request, sourceSignal);
+      if (!usesDefaultSign && sourceSignal !== undefined) {
+        try {
+          request = new Request(request, { signal: AbortSignal.any([sourceSignal, attemptSignal]) });
+        } catch (err) {
+          cancelRequestBody(request, err);
+          throw err;
+        }
+        attemptSignal = validateRequestBeforeTransport(request);
       }
-      const request = publicSignRequired
-        ? await sign.call(this, signingInput, reusableRequest.init)
-        : await this.#sign(signingInput, reusableRequest.init, reusableRequest.preparedBody);
       const attemptMethod = request.method;
-      const attemptSignal = request.signal;
-      throwIfSignalAborted(attemptSignal);
+      const retryableMethod = usesDefaultSign && attemptMethod === method && isIdempotentMethod(method);
       let response;
       try {
         response = await fetchFn(request);
       } catch (err) {
         throwIfSignalAborted(attemptSignal);
-        if (attempt === this.#retries || !isIdempotentMethod(attemptMethod) || isAbortError(err, attemptSignal)) {
+        if (attempt === this.#retries || !retryableMethod || isAbortError(err, attemptSignal)) {
           throw err;
         }
         await sleep(Math.random() * this.#retryDelayMs(attempt), attemptSignal);
@@ -242,8 +248,7 @@ export class SigV4Client {
         await cancelResponseBody(response, attemptSignal);
         throw new TypeError("SigV4Client.fetch received a redirect response; redirect targets must be re-signed");
       }
-      const retryableResponse =
-        isIdempotentMethod(attemptMethod) && (response.status >= 500 || response.status === 429);
+      const retryableResponse = retryableMethod && (response.status >= 500 || response.status === 429);
       if (attempt === this.#retries || !retryableResponse) {
         return response;
       }
@@ -356,6 +361,35 @@ function isRedirectResponse(response: Response): boolean {
 function throwIfSignalAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw abortReason(signal);
+  }
+}
+
+function validateRequestBeforeTransport(request: Request, sourceSignal?: AbortSignal): AbortSignal {
+  try {
+    if (sourceSignal !== undefined) {
+      throwIfSignalAborted(sourceSignal);
+    }
+    const signal = request.signal;
+    throwIfSignalAborted(signal);
+    rejectNoCorsMode(request.mode);
+    if (request.redirect !== "manual") {
+      throw new TypeError('SigV4Client.sign() must return a Request with redirect: "manual"');
+    }
+    return signal;
+  } catch (err) {
+    cancelRequestBody(request, err);
+    throw err;
+  }
+}
+
+function cancelRequestBody(request: Request, reason: unknown): void {
+  try {
+    const cancellation = request.body?.cancel(reason);
+    if (cancellation !== undefined) {
+      void cancellation.catch(() => undefined);
+    }
+  } catch {
+    // Best-effort release when a signed request is rejected before transport.
   }
 }
 

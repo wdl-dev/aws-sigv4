@@ -43,6 +43,9 @@ jobs:
       - name: Check test coverage
         run: npm run test:coverage
 
+      - name: Run workerd smoke test
+        run: npm run test:workerd
+
       - name: Check package contents
         run: npm run check:pack
 

@@ -44,6 +44,7 @@
     "prepack": "npm run build",
     "test": "npm run build && node --test test/unit/*.test.js",
     "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/index.js --test-coverage-lines=95 --test-coverage-branches=90 --test-coverage-functions=95 test/unit/*.test.js",
+    "test:workerd": "npm run build && workerd test test/workerd/config.capnp",
     "test:integration:s3": "npm run build && node --test --test-isolation=none test/s3-integration.test.js"
   },
   "devDependencies": {
@@ -52,9 +53,13 @@
     "globals": "^17.7.0",
     "prettier": "^3.9.4",
     "typescript": "6.0.3",
-    "typescript-eslint": "^8.62.1"
+    "typescript-eslint": "^8.62.1",
+    "workerd": "1.20260701.1"
   },
   "engines": {
     "node": ">=24"
+  },
+  "allowScripts": {
+    "workerd@1.20260701.1": true
   }
 }

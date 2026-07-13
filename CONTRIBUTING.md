@@ -28,6 +28,7 @@ Before opening a pull request, run:
 npm run lint
 npm run format:check
 npm run test:coverage
+npm run test:workerd
 npm run check:pack
 npm pack --dry-run
 git diff --cached --check

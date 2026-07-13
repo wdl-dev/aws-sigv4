@@ -14,18 +14,53 @@ interface SignatureOptions {
   cache?: SigningKeyCache | undefined;
 }
 
+const inFlightSigningKeys = new WeakMap<SigningKeyCache, Map<string, Promise<ArrayBuffer>>>();
+
 export async function signatureHex(options: SignatureOptions): Promise<string> {
   const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
   const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
   let signingKey = options.cache?.get(cacheKey);
-  if (!signingKey) {
-    const kDate = await hmac(`AWS4${options.secretAccessKey}`, options.date);
-    const kRegion = await hmac(kDate, options.region);
-    const kService = await hmac(kRegion, options.service);
-    signingKey = await hmac(kService, AWS_REQUEST);
-    options.cache?.set(cacheKey, signingKey);
+  if (signingKey === undefined) {
+    signingKey = await deriveCachedSigningKey(options, cacheKey);
   }
   return hex(await hmac(signingKey, options.stringToSign));
+}
+
+async function deriveCachedSigningKey(options: SignatureOptions, cacheKey: string): Promise<ArrayBuffer> {
+  const cache = options.cache;
+  if (cache === undefined) {
+    return deriveSigningKey(options);
+  }
+  let byKey = inFlightSigningKeys.get(cache);
+  if (byKey === undefined) {
+    byKey = new Map();
+    inFlightSigningKeys.set(cache, byKey);
+  }
+  const existing = byKey.get(cacheKey);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const derivation = (async () => {
+    try {
+      const signingKey = await deriveSigningKey(options);
+      cache.set(cacheKey, signingKey);
+      return signingKey;
+    } finally {
+      byKey.delete(cacheKey);
+      if (byKey.size === 0) {
+        inFlightSigningKeys.delete(cache);
+      }
+    }
+  })();
+  byKey.set(cacheKey, derivation);
+  return derivation;
+}
+
+async function deriveSigningKey(options: SignatureOptions): Promise<ArrayBuffer> {
+  const kDate = await hmac(`AWS4${options.secretAccessKey}`, options.date);
+  const kRegion = await hmac(kDate, options.region);
+  const kService = await hmac(kRegion, options.service);
+  return hmac(kService, AWS_REQUEST);
 }
 
 export async function sha256Hex(value: string | Uint8Array | ArrayBuffer): Promise<string> {

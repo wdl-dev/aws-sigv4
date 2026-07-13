@@ -74,8 +74,8 @@ export function validateCredentialOptions(
   const record = options as Record<string, unknown>;
   requireCredentialComponent(record.accessKeyId, "accessKeyId");
   requireSecretAccessKey(record.secretAccessKey);
-  requireCredentialComponent(record.service, "service");
-  requireCredentialComponent(record.region, "region");
+  requireLowercaseCredentialComponent(record.service, "service");
+  requireLowercaseCredentialComponent(record.region, "region");
   if (record.sessionToken !== undefined) {
     validateSessionToken(record.sessionToken);
   }
@@ -102,6 +102,17 @@ export function requireCredentialComponent(value: unknown, name: string): assert
 export function requireSecretAccessKey(value: unknown): asserts value is string {
   requireString(value, "secretAccessKey");
   rejectControlChars(value, "secretAccessKey");
+  // The secret is HMAC input, not Authorization syntax; compatible services may use valid Unicode.
+  if (!value.isWellFormed()) {
+    throw new TypeError("secretAccessKey must contain well-formed UTF-16");
+  }
+}
+
+function requireLowercaseCredentialComponent(value: unknown, name: string): asserts value is string {
+  requireCredentialComponent(value, name);
+  if (value !== value.toLowerCase()) {
+    throw new TypeError(`${name} must be lowercase`);
+  }
 }
 
 export function requireNonNegativeInteger(value: number, name: string): number {
@@ -211,7 +222,7 @@ function optionalCredentialComponent(value: unknown, name: string): string | und
   if (value === undefined) {
     return undefined;
   }
-  requireCredentialComponent(value, name);
+  requireLowercaseCredentialComponent(value, name);
   return value;
 }
 

@@ -618,6 +618,51 @@ test("signing rejects credential fields with control characters", async () => {
   );
 });
 
+test("signing rejects malformed UTF-16 secret access keys", async () => {
+  await assert.rejects(
+    () =>
+      signAwsRequest({
+        accessKeyId: ACCESS_KEY_ID,
+        secretAccessKey: "SECRET\ud800KEY",
+        service: "lambda",
+        region: "ap-northeast-1",
+        method: "GET",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        signingDate: FIXED_AMZ_DATE,
+      }),
+    /secretAccessKey must contain well-formed UTF-16/
+  );
+  assert.throws(
+    () => lambdaClient({ secretAccessKey: "SECRET\ud801KEY" }),
+    /secretAccessKey must contain well-formed UTF-16/
+  );
+});
+
+test("signing rejects uppercase service and region values", async () => {
+  for (const [name, value] of [
+    ["service", "S3"],
+    ["region", "US-EAST-1"],
+  ]) {
+    await assert.rejects(
+      () =>
+        lambdaRequest({
+          [name]: value,
+          method: "GET",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        }),
+      new RegExp(`${name} must be lowercase`)
+    );
+    assert.throws(() => lambdaClient({ [name]: value }), new RegExp(`${name} must be lowercase`));
+    await assert.rejects(
+      () =>
+        lambdaClient().sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          signing: { [name]: value },
+        }),
+      new RegExp(`init\\.signing\\.${name} must be lowercase`)
+    );
+  }
+});
+
 test("signing rejects credential components with whitespace", async () => {
   await assert.rejects(
     () =>

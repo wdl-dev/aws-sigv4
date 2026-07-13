@@ -17,10 +17,18 @@ SPDX-License-Identifier: Apache-2.0
 - Breaking: `Request` input bodies are transferred directly instead of being
   cloned, avoiding an unread tee branch while making the original request body
   unavailable after the signed request consumes it.
+- Breaking: `SigV4Client.fetch()` disables automatic retries whenever `sign()`
+  is overridden, including logging or instrumentation wrappers that delegate
+  unchanged to `super.sign()`, because the client cannot prove that an arbitrary
+  hook preserved the first attempt's target, body, and conditional headers.
+- Breaking: credential `service` and `region` values must now be lowercase and
+  are rejected rather than silently normalized or signed into an invalid scope.
 - Hid client credentials and transport state in native private fields and
   verified that runtime request guards preserve authorization and signed headers.
 - Added abort-aware body materialization and retry-response cleanup, exact
   abort-reason propagation, and a lower-level `signAwsRequest()` signal option.
+- Added a CI smoke test pinned to `workerd@1.20260701.1`, covering a golden
+  signature and the signed fetch/retry path on compatibility date `2026-07-01`.
 - Fixed raw-string double path encoding, rejected non-transportable raw control
   characters, and made default redirect rejection compatible with workerd.
 - Matched platform `Request` inheritance for signals and `body: null`, rejected
@@ -33,6 +41,14 @@ SPDX-License-Identifier: Apache-2.0
   copying materialized request bytes again for every attempt, without retaining
   temporary UTF-8 copies of string bodies, bypassing overridden `sign()` hooks,
   or reactivating stale prepared bytes after a hook changes request state.
+- Clarified that `UNSIGNED-PAYLOAD` does not protect bodies sent over plaintext
+  HTTP, that payload signing cannot replace HTTPS, and that workerd does not
+  expose browser-style no-cors request semantics.
+- Rejected non-manual redirect modes returned by overridden `sign()` methods
+  before a custom transport can follow a redirect with signed credentials, and
+  prevented hooks from reintroducing `no-cors` or dropping the caller's signal;
+  hook-returned request bodies are canceled when these checks reject before
+  transport.
 - Required every request `x-amz-*` header and S3 `content-md5` header to remain
   signed, narrowed custom fetch transports to their actual one-Request contract,
   failed closed when transports return after abort or follow manual redirects,
@@ -47,6 +63,12 @@ SPDX-License-Identifier: Apache-2.0
   smoke test against it.
 - Restricted retry counts to non-negative safe integers and rejected explicit
   `null` retry counts and delay bounds.
+- Shared concurrent signing-key derivation for matching cold-cache credential
+  scopes and removed each in-flight entry after success or failure.
+- Rejected malformed UTF-16 secret access keys before UTF-8 encoding can alias
+  distinct JavaScript strings, clarified why valid Unicode secrets remain
+  supported, documented materialized-body memory responsibility, and clarified
+  real AWS S3 test resource usage.
 - Made package contents an exact allowlist, made the S3 integration command fail
   instead of silently skipping without an explicit mode, and made both registries
   publish the exact tarball accepted by package validation and retained for

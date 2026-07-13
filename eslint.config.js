@@ -46,5 +46,13 @@ export default tseslint.config(
       curly: "error",
       eqeqeq: "error",
     },
+  },
+  {
+    files: ["test/workerd/**/*.js"],
+    languageOptions: {
+      globals: {
+        ...globals.worker,
+      },
+    },
   }
 );

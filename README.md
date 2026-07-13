@@ -13,7 +13,8 @@ SPDX-License-Identifier: Apache-2.0
 Small zero-dependency AWS Signature Version 4 signer for web-standard runtimes,
 with focused coverage for JSON AWS APIs and S3-compatible object storage.
 The supported baseline is Node.js 24+; other runtimes need equivalent ES2025 and
-Web API support.
+Web API support. CI also runs a smoke test on the pinned `workerd@1.20260701.1`
+release with compatibility date `2026-07-01`.
 Inputs are ordinary standards-compliant Web API objects created by the active
 runtime. Cross-realm objects, arbitrary polyfills, monkey-patched platform
 instances, prototype-polluted option bags, and hostile custom transports are not
@@ -85,8 +86,11 @@ The npm command requires `AWS_SIGV4_S3_INTEGRATION` to be `1`, `s3mock`, or
 `aws` and fails when no mode is selected, so a skipped integration test cannot
 be mistaken for a successful run.
 
-The integration creates a temporary bucket, puts, gets, lists, and deletes
-objects using path-style S3 requests signed by this package. Treat it as an
+In local `1` or `s3mock` mode, the integration creates and deletes a temporary
+bucket. In `aws` mode, `AWS_SIGV4_S3_BUCKET` is required; the test leaves that
+bucket in place and creates objects only under a randomized `runs/` prefix,
+which it removes afterward. Both modes put, get, list, and delete objects using
+path-style S3 requests signed by this package. Treat the local mode as an
 S3-compatible smoke test, not as an AWS S3 semantics or signature oracle.
 
 ## API
@@ -97,6 +101,8 @@ Required options are `accessKeyId`, `secretAccessKey`, `service`, and `region`.
 Optional options are `sessionToken`, `cache`, `retries`, `initialRetryDelayMs`,
 `maxRetryDelayMs`, `unsignedPayload`, `signAllHeaders`, `unsignableHeaders`,
 `doubleUrlEncode`, and `fetch`.
+`service` and `region` must be lowercase; invalid values are rejected rather
+than silently normalized.
 Pass option bags as plain data objects. Configuration is read when a client is
 created or a lower-level signing call starts.
 
@@ -111,10 +117,14 @@ a transport that ignored these obligations.
 `service: "s3"` defaults to `UNSIGNED-PAYLOAD`. Other services hash the request
 body by default. `UNSIGNED-PAYLOAD` signs the request metadata but not the body
 bytes; set `unsignedPayload: false` when `Authorization` must bind the payload
-contents. `retries` defaults to `0`, `initialRetryDelayMs` defaults to `50`,
-and `maxRetryDelayMs` defaults to `5000`. `retries` must be a non-negative safe
-integer, both delay values must be non-negative finite numbers, and explicit
-`null` values are rejected rather than treated as defaults. Path encoding
+contents. Remote endpoints must always use HTTPS; keep plaintext HTTP limited to
+trusted local test emulators. Setting `unsignedPayload: false` adds payload
+integrity, but does not provide transport confidentiality, authenticate the
+response, or prevent replay of a captured signed request. `retries` defaults to
+`0`, `initialRetryDelayMs` defaults to `50`, and `maxRetryDelayMs` defaults to
+`5000`. `retries` must be a non-negative safe integer, both delay values must be
+non-negative finite numbers, and explicit `null` values are rejected rather than
+treated as defaults. Path encoding
 follows AWS-style service defaults: `doubleUrlEncode` defaults to `false` for
 `service: "s3"` and `true` for other services. An explicit value always
 overrides the service default.
@@ -163,6 +173,9 @@ SigV4 requires. After constructing a signed `Request`, the client verifies that
 `Authorization` and every signed header other than runtime-owned `Host` survived
 request guards unchanged. Browser cross-origin requests still require the
 destination to grant the appropriate CORS origin, method, and header permissions.
+Runtimes without browser no-cors semantics may not expose a `Request.mode` value;
+for example, the pinned workerd release ignores a hook-supplied `mode: "no-cors"`
+and does not perform browser-style header stripping.
 
 By default, signing excludes volatile hop-by-hop and transport headers such as
 `accept-encoding`, `content-length`, and `user-agent`. `signAllHeaders` signs
@@ -216,6 +229,10 @@ snapshotted so the hashed bytes and every transmitted attempt remain identical.
 `client.fetch()`'s built-in signing path reuses that private prepared snapshot
 across signing attempts instead of copying the full body again for every attempt.
 Standard `Blob` bodies are immutable and can be reused directly.
+`ReadableStream` bodies that must be hashed or replayed, and all `FormData`
+bodies, are fully buffered without a built-in size limit. Callers must enforce
+appropriate body limits or provide an `AbortSignal` when those inputs may be
+large or unbounded.
 
 `URL` and `Request` inputs are already normalized by the platform URL parser.
 For raw paths that contain literal `.` or `..` path segments, use
@@ -259,6 +276,16 @@ retries all non-abort `fetch` rejections for those methods; the Web Fetch API
 does not expose a portable transient/permanent classification. Retry delays use
 full jitter between `0` and the capped exponential backoff delay; `Retry-After`
 response headers are not read.
+
+Automatic retries are disabled when `sign()` is overridden on the client or a
+subclass. The hook still signs and sends the first attempt, but retry safety
+cannot be inferred when it may change the target, body, or conditional headers.
+An override must still return a `Request` whose redirect mode is `"manual"`;
+other redirect modes are rejected before invoking the configured transport. A
+hook-returned `mode: "no-cors"` is also rejected when the runtime exposes that
+mode. The caller's effective signal remains authoritative and is combined with
+the hook's returned request signal, so a hook cannot disable caller cancellation.
+
 `FormData` signing always buffers the body to generate a stable multipart
 boundary. Unsigned S3 `ReadableStream` bodies avoid full buffering when
 `retries: 0`; keep `retries: 0` for large streaming uploads. Non-standard async
