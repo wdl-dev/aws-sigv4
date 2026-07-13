@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareHashedBody, shouldHashPayload, shouldMaterializeBodyForReplay, type PreparedBody } from "./body.js";
+import { prepareSigningBody, type PreparedBody } from "./body.js";
 import { AMZ_CONTENT_SHA256_HEADER } from "./constants.js";
 import { sha256Hex } from "./crypto.js";
 import { signerOverwrittenHeaderNames, validateSignedHeaderValues } from "./headers.js";
@@ -12,48 +12,41 @@ import {
   requireNonNegativeFiniteNumber,
   requireNonNegativeInteger,
   requireSigningCache,
+  resolveDoubleUrlEncode,
   resolveUnsignedPayload,
   validateCredentialOptions,
 } from "./options.js";
 import {
   assertParsedRequestCanRepresentSignedUrl,
-  assertRequestCanRepresentSignedUrl,
-  assertSignedRequestHeadersPreserved,
   bindFetch,
-  defaultMethod,
+  createSignedRequest,
   isIdempotentMethod,
-  mergeDefinedRequestInit,
-  mergeHeaders,
-  methodForRequest,
-  normalizeMethod,
-  rejectFetchForbiddenMethod,
+  isRedirectResponse,
   rejectEmptyHeader,
-  rejectNoCorsMode,
-  rejectRequestBodyForGetHead,
-  rejectUsedRequestBody,
-  requestBodyForInput,
   requestInitForSignedRequest,
-  snapshotRequestInit,
-  snapshotRequestInput,
-  type RequestInputSnapshot,
+  resolveClientFetchRequest,
+  resolveClientSignRequest,
+  validateRequestBeforeTransport,
+  type ResolvedClientFetchRequest,
+  type ResolvedClientRequest,
 } from "./request.js";
-import { abortReason, cancelResponseBody, isAbortError, sleep } from "./retry.js";
+import { cancelResponseBody, isAbortError, sleep } from "./retry.js";
 import { signAwsRequestInternal } from "./signer.js";
 import type { SigV4ClientOptions, SigV4RequestInit, SigningKeyCache } from "./types.js";
-import { parseRequestUrl } from "./url.js";
 
-interface ReusableRequestOptions {
-  defaultService: string;
-  defaultUnsignedPayload: boolean | undefined;
-  defaultSignAllHeaders: boolean | undefined;
-  defaultUnsignableHeaders: readonly string[] | undefined;
-  hasClientSessionToken: boolean;
-  replayBody: boolean;
+interface ResolvedSigningOptions {
+  service: string;
+  region: string;
+  unsignedPayload: boolean;
+  signAllHeaders: boolean | undefined;
+  unsignableHeaders: readonly string[] | undefined;
+  doubleUrlEncode: boolean;
+  signingDate: string | Date | undefined;
 }
 
-interface ReusableRequestState {
-  init: SigV4RequestInit;
-  preparedBody: PreparedBody | undefined;
+interface PreparedFetchRequest {
+  request: ResolvedClientFetchRequest;
+  body: PreparedBody;
 }
 
 const MAX_RETRY_DELAY_MS = 2_147_483_647;
@@ -106,130 +99,70 @@ export class SigV4Client {
     this.#fetchFn = bindFetch(fetchFn);
   }
 
-  sign(input: Request | string | URL, init?: SigV4RequestInit): Promise<Request> {
-    return this.#sign(input, init);
+  async sign(input: Request | string | URL, init?: SigV4RequestInit): Promise<Request> {
+    const request = resolveClientSignRequest(input, init);
+    const signing = this.#resolveSigningOptions(request.init.signing);
+    delete request.init.signing;
+    assertParsedRequestCanRepresentSignedUrl(request.requestUrl.pathname, signing.service);
+    return this.#signResolvedRequest(request, signing);
   }
 
-  async #sign(input: Request | string | URL, init?: SigV4RequestInit, preparedBody?: PreparedBody): Promise<Request> {
-    const inputIsRequest = input instanceof Request;
-    const inputSnapshot = inputIsRequest ? snapshotRequestInput(input) : undefined;
-    const requestUrl = parseRequestUrl(inputSnapshot?.url ?? (input as string | URL));
-    const initSnapshot = snapshotRequestInit(init);
-    const requestInit = inputSnapshot ? mergeDefinedRequestInit(inputSnapshot.init, initSnapshot) : initSnapshot;
-    const signal = requestInit.signal ?? undefined;
-    if (signal !== undefined) {
-      throwIfSignalAborted(signal);
-    }
-    const signingOptions = normalizeClientSigningOptions(requestInit.signing);
-    delete requestInit.signing;
-    rejectNoCorsMode(requestInit.mode);
-
-    let method = requestInit.method;
-    let headers = requestInit.headers;
-    let body = requestInit.body;
-
-    if (inputSnapshot !== undefined) {
-      if (method === undefined) {
-        method = inputSnapshot.method;
-      }
-      headers = mergeHeaders(inputSnapshot.headers, headers);
-      rejectUsedRequestBody(inputSnapshot.bodyUsed, body);
-      if ((body === undefined || body === null) && inputSnapshot.body) {
-        body = inputSnapshot.body;
-      }
-    }
-    const normalizedMethod = normalizeMethod(method === undefined ? defaultMethod(body) : method);
-    rejectFetchForbiddenMethod(normalizedMethod);
-    rejectRequestBodyForGetHead(normalizedMethod, body);
-    const service = signingOptions.service ?? this.#service;
-    assertParsedRequestCanRepresentSignedUrl(requestUrl.pathname, service);
-
+  async #signResolvedRequest(
+    request: ResolvedClientRequest,
+    signing: ResolvedSigningOptions,
+    preparedBody?: PreparedBody
+  ): Promise<Request> {
+    request.signal?.throwIfAborted();
     const signed = await signAwsRequestInternal(
       {
         accessKeyId: this.#accessKeyId,
         secretAccessKey: this.#secretAccessKey,
         sessionToken: this.#sessionToken,
-        service,
-        region: signingOptions.region ?? this.#region,
+        service: signing.service,
+        region: signing.region,
         cache: this.#cache,
-        unsignedPayload: signingOptions.unsignedPayload ?? this.#unsignedPayload,
-        signAllHeaders: signingOptions.signAllHeaders ?? this.#signAllHeaders,
-        unsignableHeaders: signingOptions.unsignableHeaders ?? this.#unsignableHeaders,
-        doubleUrlEncode: signingOptions.doubleUrlEncode ?? this.#doubleUrlEncode,
-        signingDate: signingOptions.signingDate,
-        signal: requestInit.signal,
-        method: normalizedMethod,
-        url: requestUrl.href,
-        headers,
-        body,
+        unsignedPayload: signing.unsignedPayload,
+        signAllHeaders: signing.signAllHeaders,
+        unsignableHeaders: signing.unsignableHeaders,
+        doubleUrlEncode: signing.doubleUrlEncode,
+        signingDate: signing.signingDate,
+        signal: request.signal,
+        method: request.method,
+        url: request.requestUrl.href,
+        headers: request.headers,
+        body: request.body,
       },
       () => this.#getSecretAccessKeyHash(),
-      requestUrl,
+      request.requestUrl,
       preparedBody
     );
 
-    if (signal !== undefined) {
-      throwIfSignalAborted(signal);
-    }
-    assertRequestCanRepresentSignedUrl(signed.url, service);
-    const signedInit = requestInitForSignedRequest(requestInit, signed);
+    request.signal?.throwIfAborted();
+    const signedInit = requestInitForSignedRequest(request.init, signed);
     return createSignedRequest(signed.url, signedInit, signed.headers);
   }
 
   async fetch(input: Request | string | URL, init?: SigV4RequestInit): Promise<Response> {
-    const inputIsRequest = input instanceof Request;
-    const requestInput = inputIsRequest ? snapshotRequestInput(input) : undefined;
-    const requestUrl = parseRequestUrl(requestInput?.url ?? (input as string | URL));
-    const signingInput = requestUrl.href;
-    const requestInit = snapshotRequestInit(init);
-    requestInit.signing = normalizeClientSigningOptions(requestInit.signing);
-    rejectNoCorsMode(requestInit.mode ?? requestInput?.init.mode);
-    const redirectPolicy = safeFetchRedirect(requestInput?.init.redirect, requestInit.redirect);
-    requestInit.redirect = "manual";
-    const method = methodForRequest(requestInput, requestInit);
-    rejectFetchForbiddenMethod(method);
-    if (requestInput !== undefined) {
-      rejectUsedRequestBody(requestInput.bodyUsed, requestInit.body);
-    }
-    rejectRequestBodyForGetHead(method, requestBodyForInput(requestInput, requestInit));
-    const service = requestInit.signing.service ?? this.#service;
-    assertParsedRequestCanRepresentSignedUrl(requestUrl.pathname, service);
-    // Freeze the hook choice before asynchronous body preparation.
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    const sign = this.sign;
-    const usesDefaultSign = sign === defaultSigV4ClientSign;
-    const replayBody = usesDefaultSign && this.#retries > 0 && isIdempotentMethod(method);
-    const reusableRequest = await reusableRequestInitForInput(requestInput, requestInit, {
-      defaultService: this.#service,
-      defaultUnsignedPayload: this.#unsignedPayload,
-      defaultSignAllHeaders: this.#signAllHeaders,
-      defaultUnsignableHeaders: this.#unsignableHeaders,
-      hasClientSessionToken: this.#sessionToken !== undefined,
-      replayBody,
-    });
-    const sourceSignal = reusableRequest.init.signal ?? undefined;
+    const request = resolveClientFetchRequest(input, init);
+    const signing = this.#resolveSigningOptions(request.init.signing);
+    delete request.init.signing;
+    assertParsedRequestCanRepresentSignedUrl(request.requestUrl.pathname, signing.service);
+    const retryableMethod = isIdempotentMethod(request.method);
+    const prepared = await prepareFetchRequest(
+      request,
+      signing,
+      this.#sessionToken !== undefined,
+      this.#retries > 0 && retryableMethod
+    );
+    const fetchFn = this.#fetchFn;
     for (let attempt = 0; attempt <= this.#retries; attempt += 1) {
-      const fetchFn = this.#fetchFn;
-      let request = usesDefaultSign
-        ? await this.#sign(signingInput, reusableRequest.init, reusableRequest.preparedBody)
-        : await sign.call(this, signingInput, reusableRequest.init);
-      let attemptSignal = validateRequestBeforeTransport(request, sourceSignal);
-      if (!usesDefaultSign && sourceSignal !== undefined) {
-        try {
-          request = new Request(request, { signal: AbortSignal.any([sourceSignal, attemptSignal]) });
-        } catch (err) {
-          cancelRequestBody(request, err);
-          throw err;
-        }
-        attemptSignal = validateRequestBeforeTransport(request);
-      }
-      const attemptMethod = request.method;
-      const retryableMethod = usesDefaultSign && attemptMethod === method && isIdempotentMethod(method);
+      const signedRequest = await this.#signResolvedRequest(prepared.request, signing, prepared.body);
+      const attemptSignal = validateRequestBeforeTransport(signedRequest);
       let response;
       try {
-        response = await fetchFn(request);
+        response = await fetchFn(signedRequest);
       } catch (err) {
-        throwIfSignalAborted(attemptSignal);
+        attemptSignal.throwIfAborted();
         if (attempt === this.#retries || !retryableMethod || isAbortError(err, attemptSignal)) {
           throw err;
         }
@@ -238,13 +171,13 @@ export class SigV4Client {
       }
       if (attemptSignal.aborted) {
         await cancelResponseBody(response, attemptSignal);
-        throwIfSignalAborted(attemptSignal);
+        attemptSignal.throwIfAborted();
       }
-      if (redirectPolicy === "manual" && response.redirected) {
+      if (prepared.request.redirectPolicy === "manual" && response.redirected) {
         await cancelResponseBody(response, attemptSignal);
         throw new TypeError('SigV4Client.fetch custom transport followed a redirect despite redirect: "manual"');
       }
-      if (redirectPolicy === "error" && isRedirectResponse(response)) {
+      if (prepared.request.redirectPolicy === "error" && isRedirectResponse(response)) {
         await cancelResponseBody(response, attemptSignal);
         throw new TypeError("SigV4Client.fetch received a redirect response; redirect targets must be re-signed");
       }
@@ -253,10 +186,24 @@ export class SigV4Client {
         return response;
       }
       await cancelResponseBody(response, attemptSignal);
-      throwIfSignalAborted(attemptSignal);
+      attemptSignal.throwIfAborted();
       await sleep(Math.random() * this.#retryDelayMs(attempt), attemptSignal);
     }
     throw new Error("unreachable retry loop exit");
+  }
+
+  #resolveSigningOptions(value: unknown): ResolvedSigningOptions {
+    const options = normalizeClientSigningOptions(value);
+    const service = options.service ?? this.#service;
+    return {
+      service,
+      region: options.region ?? this.#region,
+      unsignedPayload: resolveUnsignedPayload(options.unsignedPayload ?? this.#unsignedPayload, service),
+      signAllHeaders: options.signAllHeaders ?? this.#signAllHeaders,
+      unsignableHeaders: options.unsignableHeaders ?? this.#unsignableHeaders,
+      doubleUrlEncode: resolveDoubleUrlEncode(options.doubleUrlEncode ?? this.#doubleUrlEncode, service),
+      signingDate: options.signingDate,
+    };
   }
 
   #getSecretAccessKeyHash(): Promise<string> {
@@ -278,168 +225,42 @@ export class SigV4Client {
   }
 }
 
-// Capture the original implementation before callers can replace the public hook.
-// eslint-disable-next-line @typescript-eslint/unbound-method
-const defaultSigV4ClientSign = SigV4Client.prototype.sign;
-
-async function reusableRequestInitForInput(
-  input: RequestInputSnapshot | undefined,
-  init: SigV4RequestInit,
-  options: ReusableRequestOptions
-): Promise<ReusableRequestState> {
-  const sourceSignal = init.signal === undefined ? input?.signal : init.signal;
-  if (sourceSignal !== undefined && sourceSignal !== null) {
-    throwIfSignalAborted(sourceSignal);
-  }
-  let reusable: ReusableRequestState;
-  if (input === undefined) {
-    reusable = await reusableRequestInit(init, options);
-  } else {
-    const inputInit = mergeDefinedRequestInit(input.init, init);
-    inputInit.method = init.method ?? input.method;
-    inputInit.headers = mergeHeaders(input.headers, init.headers);
-    inputInit.signal = init.signal === undefined ? input.signal : init.signal;
-    if ((init.body === undefined || init.body === null) && input.body) {
-      inputInit.body = input.body;
-    }
-    reusable = await reusableRequestInit(inputInit, options);
-  }
-  if (sourceSignal !== undefined && sourceSignal !== null) {
-    throwIfSignalAborted(sourceSignal);
-  }
-  if (sourceSignal === undefined) {
-    delete reusable.init.signal;
-  } else {
-    reusable.init.signal = sourceSignal;
-  }
-  return reusable;
-}
-
-function safeFetchRedirect(inherited: RequestRedirect | undefined, explicit: unknown): RequestRedirect {
-  if (explicit !== undefined) {
-    if (explicit === "follow") {
-      throw new TypeError('SigV4Client.fetch does not allow redirect: "follow"; redirected requests must be re-signed');
-    }
-    if (explicit !== "error" && explicit !== "manual") {
-      throw new TypeError('redirect must be "error" or "manual"');
-    }
-    return explicit;
-  }
-  return inherited === "manual" ? "manual" : "error";
-}
-
-function createSignedRequest(url: string, init: RequestInit, expectedHeaders: Headers): Request {
-  let request: Request;
-  try {
-    request = new Request(url, init);
-  } catch (err) {
-    const duplex = (init as RequestInit & { duplex?: unknown }).duplex;
-    if (!(err instanceof TypeError) || !(init.body instanceof ReadableStream) || duplex !== undefined) {
-      throw err;
-    }
-    request = new Request(url, {
-      ...init,
-      duplex: "half",
-    } as RequestInit & { duplex: "half" });
-  }
-  assertSignedRequestHeadersPreserved(expectedHeaders, request.headers);
-  return request;
-}
-
-function isRedirectResponse(response: Response): boolean {
-  return (
-    response.type === "opaqueredirect" ||
-    response.redirected ||
-    response.status === 301 ||
-    response.status === 302 ||
-    response.status === 303 ||
-    response.status === 307 ||
-    response.status === 308
-  );
-}
-
-function throwIfSignalAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw abortReason(signal);
-  }
-}
-
-function validateRequestBeforeTransport(request: Request, sourceSignal?: AbortSignal): AbortSignal {
-  try {
-    if (sourceSignal !== undefined) {
-      throwIfSignalAborted(sourceSignal);
-    }
-    const signal = request.signal;
-    throwIfSignalAborted(signal);
-    rejectNoCorsMode(request.mode);
-    if (request.redirect !== "manual") {
-      throw new TypeError('SigV4Client.sign() must return a Request with redirect: "manual"');
-    }
-    return signal;
-  } catch (err) {
-    cancelRequestBody(request, err);
-    throw err;
-  }
-}
-
-function cancelRequestBody(request: Request, reason: unknown): void {
-  try {
-    const cancellation = request.body?.cancel(reason);
-    if (cancellation !== undefined) {
-      void cancellation.catch(() => undefined);
-    }
-  } catch {
-    // Best-effort release when a signed request is rejected before transport.
-  }
-}
-
-async function reusableRequestInit(
-  init: SigV4RequestInit,
-  options: ReusableRequestOptions
-): Promise<ReusableRequestState> {
-  const headers = new Headers(init.headers);
+async function prepareFetchRequest(
+  request: ResolvedClientFetchRequest,
+  signing: ResolvedSigningOptions,
+  hasSessionToken: boolean,
+  replay: boolean
+): Promise<PreparedFetchRequest> {
+  const headers = new Headers(request.headers);
   rejectEmptyHeader(headers, AMZ_CONTENT_SHA256_HEADER);
-  const service = init.signing?.service ?? options.defaultService;
-  const unsignedPayload = resolveUnsignedPayload(
-    init.signing?.unsignedPayload ?? options.defaultUnsignedPayload,
-    service
-  );
-  const unsignableHeaders = (init.signing?.unsignableHeaders ?? options.defaultUnsignableHeaders) as
-    readonly string[] | undefined;
   validateSignedHeaderValues(headers, {
-    service,
-    signAllHeaders: init.signing?.signAllHeaders ?? options.defaultSignAllHeaders,
-    unsignableHeaders,
-    overwrittenHeaderNames: signerOverwrittenHeaderNames(options.hasClientSessionToken),
+    service: signing.service,
+    signAllHeaders: signing.signAllHeaders,
+    unsignableHeaders: signing.unsignableHeaders,
+    overwrittenHeaderNames: signerOverwrittenHeaderNames(hasSessionToken),
   });
-  const materializeBody = options.replayBody && shouldMaterializeBodyForReplay(init.body);
-  const hashPayload = shouldHashPayload(init.body, headers, unsignedPayload);
-  if (
-    !materializeBody &&
-    !hashPayload &&
-    (init.body === undefined ||
-      init.body === null ||
-      typeof init.body === "string" ||
-      init.body instanceof ReadableStream)
-  ) {
-    return {
-      init: {
-        ...init,
-        headers,
-      },
-      preparedBody: undefined,
-    };
-  }
-  const body = await prepareHashedBody(init.body, headers, unsignedPayload, materializeBody, init.signal ?? undefined);
+  const body = await prepareSigningBody(request.body, headers, {
+    service: signing.service,
+    unsignedPayload: signing.unsignedPayload,
+    replay,
+    signal: request.signal,
+  });
   const out: SigV4RequestInit = {
-    ...init,
+    ...request.init,
     headers,
   };
-  if (body.body !== undefined) {
+  if (body.body === undefined) {
+    delete out.body;
+  } else {
     out.body = body.body;
   }
   return {
-    init: out,
-    preparedBody: body.body === init.body ? undefined : body,
+    request: {
+      ...request,
+      init: out,
+      headers,
+      body: body.body,
+    },
+    body,
   };
 }

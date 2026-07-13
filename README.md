@@ -15,10 +15,11 @@ with focused coverage for JSON AWS APIs and S3-compatible object storage.
 The supported baseline is Node.js 24+; other runtimes need equivalent ES2025 and
 Web API support. CI also runs a smoke test on the pinned `workerd@1.20260701.1`
 release with compatibility date `2026-07-01`.
-Inputs are ordinary standards-compliant Web API objects created by the active
-runtime. Cross-realm objects, arbitrary polyfills, monkey-patched platform
-instances, prototype-polluted option bags, and hostile custom transports are not
-security boundaries provided by this package; callers and transports are trusted.
+Web API inputs must be standards-compliant objects created by the active runtime;
+cross-realm objects and arbitrary polyfills are outside the supported input
+contract. Callers and custom transports are trusted. Monkey-patched platform
+instances and prototype-polluted option bags are not security boundaries provided
+by this package.
 
 It intentionally implements only a narrow HTTP signing surface:
 
@@ -93,246 +94,168 @@ which it removes afterward. Both modes put, get, list, and delete objects using
 path-style S3 requests signed by this package. Treat the local mode as an
 S3-compatible smoke test, not as an AWS S3 semantics or signature oracle.
 
-## API
+## Runtime contract
+
+Pass client options, request init values, and per-request signing options as
+plain data objects. Only own enumerable fields are part of the supported option
+bag contract; values are captured at client construction or operation start.
+`service` and `region` must be lowercase. Validation and request representation
+failures use standard `TypeError` instances rather than a custom error hierarchy.
+
+Credentials and transport configuration are stored in native ECMAScript private
+fields. They are not exposed through enumeration, object spread, or JSON
+serialization, but they remain available to a compromised process or debugger.
+`SigV4Client` retains the secret access key for its lifetime; create a new client
+when credentials rotate.
+
+A client creates an internal signing-key `Map` unless `cache` is supplied. Treat
+shared cache keys and values as sensitive process-local material. Caches do not
+evict automatically, so long-running processes that sign many date, region, or
+service scopes should provide a trusted Map-like cache with application-managed
+eviction.
+
+This package does not discover endpoints, refresh credentials, or compensate for
+clock skew. Use `signingDate` when the signing time must be controlled.
+
+## Payloads and signed headers
+
+S3 defaults to `UNSIGNED-PAYLOAD`; other services hash request bodies by default.
+`UNSIGNED-PAYLOAD` authenticates request metadata but not body bytes. Set
+`unsignedPayload: false` when the authorization must bind the payload. Remote
+endpoints must still use HTTPS: payload signing does not provide confidentiality,
+authenticate responses, or prevent replay of captured signed requests.
+
+An explicit non-empty `x-amz-content-sha256` value becomes the canonical payload
+hash. Do not forward that header from untrusted input unless a precomputed hash or
+`UNSIGNED-PAYLOAD` is intentional.
+
+Signed header values must contain printable ASCII only. Encode non-ASCII values
+before signing; S3 user metadata can use the service's RFC 2047 convention. The
+package does not infer application header semantics.
+
+By default, volatile transport headers such as `accept-encoding`,
+`content-length`, and `user-agent` are excluded. `signAllHeaders` includes them
+except for an existing `authorization` header. `unsignableHeaders` cannot exclude
+`host`, SigV4 control headers, request `x-amz-*` headers, or S3 `content-md5`.
+`host` always comes from the signed URL.
+
+Set each signed header once with its final value. Repeated values created with
+`Headers.append()` are not portable because runtimes may serialize them as one
+comma-separated field or multiple field lines; this is especially important on
+workerd.
+
+## URL encoding
+
+Path signing uses the effective service after per-request overrides. S3 paths are
+single-encoded by default, preserving existing percent triplets for object keys.
+Other services default to double-encoded normalized paths: existing percent signs
+are escaped, repeated slashes are collapsed, and dot segments are rejected. Set
+`doubleUrlEncode: false` for a compatible non-S3 endpoint that requires the old
+single-encoded behavior. Query parameters always use standard SigV4 canonical
+query encoding.
+
+String URLs preserve their raw path and query for signing after their transport
+encoding is determined. `URL` and `Request` inputs already contain platform-
+normalized values. `SigV4Client` rejects literal or percent-encoded dot segments
+because a web `Request` cannot represent them without normalization; use
+`signAwsRequest()` with a raw string URL and a preserving transport when an S3
+object key requires them.
+
+Canonical query signing ignores empty segments, preserves explicit empty keys and
+duplicate keys, and does not decode form data. A literal `+` is signed as `%2B`;
+encode a space as `%20`. Raw whitespace, C0 controls, DEL, backslashes, malformed
+percent escapes, and invalid UTF-16 are rejected where they cannot be transported
+unchanged.
+
+## Request bodies
+
+All signing APIs default to `POST` when the effective body is present and `GET`
+otherwise. Pass an explicit method when the service requires different semantics.
+
+For a `Request` input, init headers merge with and override request headers. An
+undefined or null init body inherits the request body directly instead of cloning
+and teeing it. A used body is rejected unless replaced. Treat the original input
+as consumed; construct independent requests from replayable bytes when both must
+remain usable.
+
+Mutable binary and URLSearchParams bodies are copied whenever hashing or retry
+replay requires stable bytes. Retries reuse that byte snapshot and its payload
+hash. Standard Blob bodies are immutable and can be reused directly when an
+existing payload hash or `UNSIGNED-PAYLOAD` avoids reading their bytes.
+
+Blob and ReadableStream bodies that require hashing, ReadableStream bodies that
+require replay, and all FormData bodies are fully buffered without a built-in
+size limit. Enforce limits or provide an AbortSignal for large or unbounded
+input. Unsigned S3 Blob and stream bodies avoid buffering with `retries: 0`;
+non-standard async iterables are rejected.
+
+An explicit init signal overrides a Request input's signal. Omission inherits the
+input signal, while `signal: null` disables inheritance. Body materialization
+preserves the exact abort reason.
+
+## Retries, redirects, and custom transports
+
+`retries` defaults to `0`; delay defaults are 50 ms initially and 5000 ms maximum.
+Configured retries apply to 5xx and 429 responses and non-abort transport
+rejections for `GET`, `HEAD`, `OPTIONS`, `PUT`, and `DELETE`. Delays use full
+jitter over capped exponential backoff; `Retry-After` is not interpreted. Keep
+retries disabled when a nominally idempotent operation is not safe to replay at
+the application layer.
+
+`fetch()` owns its signing path and does not call an overridden `client.sign()`
+method. Use a custom transport for logging, instrumentation, or transport policy
+without changing retry semantics.
+
+Automatic redirect following is disabled because signatures are bound to the
+original URL. Transport requests always use `redirect: "manual"` for workerd
+compatibility. The default policy rejects redirect responses; an explicit
+`redirect: "manual"` returns them, while `redirect: "follow"` is rejected before
+body consumption. Validate an accepted target and submit it as a new signed
+request.
+
+`mode: "no-cors"` is rejected where the runtime exposes it because required
+headers may be stripped. The client verifies that Authorization and signed
+headers survive Request construction. Browser callers still need appropriate
+CORS permission; workerd does not expose browser-style no-cors semantics.
+
+A custom transport receives one signed `Request` and returns a
+`Promise<Response>`. It must honor the request signal, stop I/O on abort, and
+preserve manual redirect mode. The effective signal covers body preparation,
+transport, response cleanup, and retry waits, with no implicit deadline. Use
+`AbortSignal.timeout()` when needed.
+
+Only standard Request state can be copied. Runtime extensions such as undici's
+`dispatcher` should be captured by the transport closure, for example
+`fetch: (request) => fetch(request, { dispatcher })`, or handled by a separate
+client after calling `signAwsRequest()`.
+
+## API reference
 
 ### `new SigV4Client(options)`
 
-Required options are `accessKeyId`, `secretAccessKey`, `service`, and `region`.
-Optional options are `sessionToken`, `cache`, `retries`, `initialRetryDelayMs`,
+Requires `accessKeyId`, `secretAccessKey`, `service`, and `region`. Optional
+values are `sessionToken`, `cache`, `retries`, `initialRetryDelayMs`,
 `maxRetryDelayMs`, `unsignedPayload`, `signAllHeaders`, `unsignableHeaders`,
 `doubleUrlEncode`, and `fetch`.
-`service` and `region` must be lowercase; invalid values are rejected rather
-than silently normalized.
-Pass option bags as plain data objects. Configuration is read when a client is
-created or a lower-level signing call starts.
-
-A custom `fetch` transport receives exactly one fully signed `Request` and must
-return a `Promise<Response>`. It does not need to accept string or `URL` inputs,
-or a separate `RequestInit` argument. It must observe `Request.signal`, stop its
-underlying I/O when aborted, and preserve `redirect: "manual"` without following
-the redirect itself. The client rejects a response returned after abort and a
-detectably followed manual redirect, but it cannot undo I/O already performed by
-a transport that ignored these obligations.
-
-`service: "s3"` defaults to `UNSIGNED-PAYLOAD`. Other services hash the request
-body by default. `UNSIGNED-PAYLOAD` signs the request metadata but not the body
-bytes; set `unsignedPayload: false` when `Authorization` must bind the payload
-contents. Remote endpoints must always use HTTPS; keep plaintext HTTP limited to
-trusted local test emulators. Setting `unsignedPayload: false` adds payload
-integrity, but does not provide transport confidentiality, authenticate the
-response, or prevent replay of a captured signed request. `retries` defaults to
-`0`, `initialRetryDelayMs` defaults to `50`, and `maxRetryDelayMs` defaults to
-`5000`. `retries` must be a non-negative safe integer, both delay values must be
-non-negative finite numbers, and explicit `null` values are rejected rather than
-treated as defaults. Path encoding
-follows AWS-style service defaults: `doubleUrlEncode` defaults to `false` for
-`service: "s3"` and `true` for other services. An explicit value always
-overrides the service default.
-
-If you pass a shared `cache`, treat it as sensitive process-local material. Cache
-keys do not contain the raw secret access key, but cache values are derived
-SigV4 signing keys. `SigV4Client` creates an internal `Map` when `cache` is not
-provided, and signing key caches do not evict entries automatically. Long-running
-processes that sign many date, region, or service scopes should provide a cache
-and manage eviction at the application boundary. Custom cache objects are
-trusted `Map`-like objects; do not pass caches from untrusted input.
-
-Credentials and transport configuration are stored in native ECMAScript private
-fields. They do not appear in property enumeration, object spread, or JSON
-serialization, and assigning a same-named public property does not alter the
-signer state. This limits accidental disclosure and mutation; it does not protect
-credentials from a compromised process or debugger. A caller-provided `cache`
-remains accessible to that caller and must still be treated as sensitive.
-
-If you provide `x-amz-content-sha256`, that non-empty value is signed as the
-canonical payload hash. Do not forward this header from untrusted input unless
-you intentionally use a precomputed payload hash or `UNSIGNED-PAYLOAD`.
-
-`SigV4Client` keeps `secretAccessKey` for the client lifetime so it can sign
-future requests. For temporary or rotated credentials, create a new client and
-release references to the old one.
-
-This package does not discover or compensate for service clock skew; pass
-`signingDate` when the signing time must be controlled. Validation and request
-representation failures throw standard `TypeError` instances rather than a
-custom error hierarchy.
-
-Signed header values must contain only printable ASCII characters (`0x20`
-through `0x7E`). Some runtime `Headers` implementations may reject unsupported
-values before this package can report its own validation error.
-Encode non-ASCII values before passing them to the signer. In particular, S3
-user metadata that needs non-ASCII text should be encoded using the service's
-RFC 2047 convention; this package does not infer or transform application header
-semantics.
-Signer validation failures are checked before stream bodies are consumed where
-possible; platform `RequestInit` validation errors may still be reported by the
-runtime when the final `Request` is constructed.
-
-`mode: "no-cors"` is rejected because a runtime may silently remove headers that
-SigV4 requires. After constructing a signed `Request`, the client verifies that
-`Authorization` and every signed header other than runtime-owned `Host` survived
-request guards unchanged. Browser cross-origin requests still require the
-destination to grant the appropriate CORS origin, method, and header permissions.
-Runtimes without browser no-cors semantics may not expose a `Request.mode` value;
-for example, the pinned workerd release ignores a hook-supplied `mode: "no-cors"`
-and does not perform browser-style header stripping.
-
-By default, signing excludes volatile hop-by-hop and transport headers such as
-`accept-encoding`, `content-length`, and `user-agent`. `signAllHeaders` signs
-otherwise excluded headers except existing `authorization` headers. Avoid
-signing headers that your `fetch` implementation or HTTP transport may rewrite.
-`unsignableHeaders` adds names to the default exclusion set. It cannot exclude
-`host`, `x-amz-content-sha256`, `x-amz-date`, `x-amz-security-token`, any
-`x-amz-*` header present in the request, or `content-md5` from an S3 request;
-attempts to do so are rejected. `host` is derived from the signed URL; any
-caller-provided `Host` header is replaced before signing, and `client.fetch()`
-sends the replaced value.
-
-Set each signed header once with its final value. Repeated values created with
-`Headers.append()` are not portable: runtimes can serialize them as either one
-comma-separated field or multiple field lines, which changes the canonical
-value reconstructed by AWS. This is particularly important in workerd-based
-runtimes.
-
-`client.sign()` and `client.fetch()` accept `init.signing` to override
-per-request signing options such as `signingDate`, `service`, `region`,
-`unsignedPayload`, `signAllHeaders`, `unsignableHeaders`, or `doubleUrlEncode`;
-it cannot override credentials or `cache`. Pass `init` and `init.signing` as
-plain data objects; their enumerable fields are snapshotted when the operation
-starts.
-
-`client.sign()`, `client.fetch()`, and `signAwsRequest()` default `method` to
-`POST` when the effective body is present and to `GET` otherwise. Pass an
-explicit method when the target service requires different semantics.
 
 ### `client.sign(input, init)`
 
-Returns a signed `Request`. `input` may be a `Request`, string URL, or `URL`.
-When `input` is a `Request`, `init.headers` are merged with the request headers
-and override duplicate names; they do not replace the request headers wholesale.
-
-When a `Request` input supplies the body and `init.body` is `undefined` or
-`null`, the client uses that body stream directly instead of cloning and teeing
-it. This matches the platform's `Request` inheritance semantics and avoids an
-unread clone branch retaining streamed bytes. A request whose body is already
-used is rejected unless a replacement body is supplied. Treat the original
-input request as consumed: hashed bodies can be read during signing, and
-consuming the returned signed request makes the original body unusable.
-Construct independent requests from replayable bytes when both requests must
-remain usable. `init.signal` overrides the input request's signal; when it is
-omitted, the input signal is inherited. An explicit `signal: null` disables that
-inheritance. Aborts cancel in-progress body materialization and propagate their
-exact reason.
-When payload hashing or retry replay requires materialization, mutable
-`ArrayBuffer`, `ArrayBufferView`, `Uint8Array`, and `URLSearchParams` bodies are
-snapshotted so the hashed bytes and every transmitted attempt remain identical.
-`client.fetch()`'s built-in signing path reuses that private prepared snapshot
-across signing attempts instead of copying the full body again for every attempt.
-Standard `Blob` bodies are immutable and can be reused directly.
-`ReadableStream` bodies that must be hashed or replayed, and all `FormData`
-bodies, are fully buffered without a built-in size limit. Callers must enforce
-appropriate body limits or provide an `AbortSignal` when those inputs may be
-large or unbounded.
-
-`URL` and `Request` inputs are already normalized by the platform URL parser.
-For raw paths that contain literal `.` or `..` path segments, use
-`signAwsRequest()` with a string URL and a transport that preserves the exact
-path. `SigV4Client` rejects paths with literal or percent-encoded dot segments
-because a web `Request` cannot represent them without path normalization.
-
-Canonical query signing ignores empty query segments, so `?a=1&&b=2` signs the
-same canonical query as `?a=1&b=2`. Explicit empty keys such as `?=value` are
-preserved. Query components are not decoded as form data before signing: a
-literal `+` is signed as `%2B`, while a space must be sent as `%20`. Avoid raw
-`+` in query strings when the receiving service interprets it as a space.
-
-Path signing uses the effective request service after per-request overrides.
-`service: "s3"` keeps single-encoded object-key semantics: existing path
-percent-triplets are signed exactly as they appear on the wire, including
-lowercase hex and percent-encoded unreserved bytes such as `%7E` or `%41`.
-Other services default to AWS-style double encoding: existing percent-encoded
-bytes have their `%` escaped, repeated slashes are collapsed, and dot segments
-are rejected before signing. For string URLs, literal Unicode and ASCII
-characters escaped by the WHATWG URL parser are first converted to their wire
-encoding, so string and `URL` inputs produce the same double-encoded signature.
-Literal path characters outside the unreserved set are URI-encoded in either
-mode. Raw whitespace, C0 controls, DEL, and backslashes are rejected because
-they cannot be transported without normalization. Pass `doubleUrlEncode: false`
-explicitly for a non-S3 service or compatible endpoint that requires
-single-encoded paths. The option applies only to the path; query parameters
-always use normal SigV4 canonical query encoding.
+Returns a signed `Request`. Input may be a Request, string URL, or URL object.
+`init.signing` can override `signingDate`, `service`, `region`, `unsignedPayload`,
+`signAllHeaders`, `unsignableHeaders`, and `doubleUrlEncode`, but not credentials
+or cache configuration.
 
 ### `client.fetch(input, init)`
 
-Signs and sends the request with the configured `fetch` implementation. A `URL`
-input is snapshotted before asynchronous body work, and every retry uses that
-same target. The client rejects Fetch-forbidden `CONNECT`, `TRACE`, and `TRACK`
-methods before consuming a body; use `signAwsRequest()` with a custom non-Fetch
-transport when one of those methods must be signed.
-
-With `retries` greater than `0`, it retries HTTP 5xx and 429 responses only for
-idempotent methods (`GET`, `HEAD`, `OPTIONS`, `PUT`, and `DELETE`). It also
-retries all non-abort `fetch` rejections for those methods; the Web Fetch API
-does not expose a portable transient/permanent classification. Retry delays use
-full jitter between `0` and the capped exponential backoff delay; `Retry-After`
-response headers are not read.
-
-Automatic retries are disabled when `sign()` is overridden on the client or a
-subclass. The hook still signs and sends the first attempt, but retry safety
-cannot be inferred when it may change the target, body, or conditional headers.
-An override must still return a `Request` whose redirect mode is `"manual"`;
-other redirect modes are rejected before invoking the configured transport. A
-hook-returned `mode: "no-cors"` is also rejected when the runtime exposes that
-mode. The caller's effective signal remains authoritative and is combined with
-the hook's returned request signal, so a hook cannot disable caller cancellation.
-
-`FormData` signing always buffers the body to generate a stable multipart
-boundary. Unsigned S3 `ReadableStream` bodies avoid full buffering when
-`retries: 0`; keep `retries: 0` for large streaming uploads. Non-standard async
-iterable bodies are rejected; wrap byte chunks in a web `ReadableStream`.
-For S3-compatible or custom AWS-compatible services where `PUT` or `DELETE` are
-not safe to replay at the application layer, keep `retries: 0` or enable retries
-only around requests that are known to be safe.
-
-Automatic redirect following is disabled because a SigV4 authorization value is
-bound to the original URL. For compatibility with workerd, `client.fetch()`
-always constructs the transport request with `redirect: "manual"`. Its default
-policy still has `"error"` semantics: a redirect response is detected and
-rejected. An explicit `redirect: "manual"` returns that response, while
-`redirect: "follow"` is rejected before the body is consumed. If a manual
-redirect is accepted by the application, validate its target and submit it as a
-separate signed request.
-
-The effective signal covers body materialization, the signed request transport,
-retry-response cleanup, and retry waits. The client preserves an explicit abort
-reason, including non-Error values. No implicit request deadline is added; use
-`AbortSignal.timeout()` (or a combined application signal) when calls need a
-deadline.
-
-Only standard `Request` state can be copied from a `Request` input. Runtime
-extensions without standard getters, such as undici's `dispatcher`, are not
-recoverable when the signed request is rebuilt, and per-request init extensions
-cannot be forwarded through the custom transport's one-`Request` contract.
-Configure them in the transport closure instead, for example
-`fetch: (request) => fetch(request, { dispatcher })`, or use
-`signAwsRequest()` and let another HTTP client send the signed result.
+Signs and sends a request using the configured transport. The effective URL,
+Request state, init fields, and headers are captured at entry. Bodies that require
+hashing or retry replay are materialized before transport, and retries reuse the
+resulting bytes. Fetch-forbidden `CONNECT`, `TRACE`, and `TRACK` methods are
+rejected before body consumption.
 
 ### `signAwsRequest(options)`
 
-Lower-level helper that returns `{ method, url, headers, body }` without sending
-the request. Use this when another HTTP client owns transport, or when S3 object
-keys need raw string URL paths that web `Request` would normalize.
-When a body is materialized for hashing, the returned `body` may be a stable
-`Uint8Array` snapshot containing the signed bytes rather than the original body
-object.
-It accepts the same signing options as `SigV4Client`, including
-`doubleUrlEncode`, plus an optional `signal` that cancels body materialization
-and propagates its exact abort reason.
-It preserves string URL paths exactly in the returned `url`. For S3, pass object
-key paths in percent-encoded form. Raw whitespace, C0 controls, DEL,
-backslashes, and malformed percent escapes are rejected. For non-S3 services,
-literal Unicode and other characters escaped by a web `Request` are signed from
-their wire encoding before the second encoding layer is applied. Literal `.`
-and `..` path segments are required for some S3 object keys; with
-`doubleUrlEncode: true`, non-S3 paths reject dot segments and collapse repeated
-slashes before path escaping.
+Returns `{ method, url, headers, body }` without sending it. Use this when another
+HTTP client owns transport or a raw S3 path must be preserved. Materialized bodies
+may be returned as a stable Uint8Array snapshot. The optional signal cancels body
+materialization and preserves its exact reason.

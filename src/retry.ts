@@ -9,7 +9,7 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     // Preserve AbortSignal.reason exactly; Web APIs allow non-Error reasons.
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-    return Promise.reject(abortReason(signal));
+    return Promise.reject(signal.reason);
   }
   return new Promise((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -20,7 +20,7 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
       signal.removeEventListener("abort", onAbort);
       // Preserve AbortSignal.reason exactly; Web APIs allow non-Error reasons.
       // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-      reject(abortReason(signal));
+      reject(signal.reason);
     };
     signal.addEventListener("abort", onAbort, { once: true });
     timeout = setTimeout(() => {
@@ -28,10 +28,6 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     }, ms);
   });
-}
-
-export function abortReason(signal: AbortSignal): unknown {
-  return signal.reason;
 }
 
 export async function cancelResponseBody(response: Response, signal: AbortSignal): Promise<void> {
@@ -46,13 +42,11 @@ export async function cancelResponseBody(response: Response, signal: AbortSignal
     return;
   }
   const settledCancellation = cancellation.catch(() => undefined);
-  if (signal.aborted) {
-    throw abortReason(signal);
-  }
+  signal.throwIfAborted();
   const { promise: aborted, reject } = Promise.withResolvers<never>();
   const onAbort = () => {
     // Preserve AbortSignal.reason exactly; Web APIs allow non-Error reasons.
-    reject(abortReason(signal));
+    reject(signal.reason);
   };
   signal.addEventListener("abort", onAbort, { once: true });
   try {

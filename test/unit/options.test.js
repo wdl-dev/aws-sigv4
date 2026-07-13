@@ -4,10 +4,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { signAwsRequest } from "../../dist/index.js";
+
 import {
+  ACCESS_KEY_ID,
   FIXED_AMZ_DATE,
   LAMBDA_ENDPOINT,
   S3_ENDPOINT,
+  SECRET_ACCESS_KEY,
   SESSION_TOKEN,
   lambdaClient,
   lambdaRequest,
@@ -427,6 +431,75 @@ test("SigV4Client snapshots unsignableHeaders iterables", async () => {
   const second = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init);
   assert.equal(first.headers.get("authorization"), second.headers.get("authorization"));
   assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
+});
+
+test("SigV4Client preserves per-request one-shot unsignableHeaders when init is reused", async () => {
+  function* headersToSkip() {
+    yield "x-debug-only";
+  }
+  const client = lambdaClient();
+  const init = {
+    method: "GET",
+    headers: {
+      "x-debug-only": "skip-me",
+    },
+    signing: {
+      signingDate: FIXED_AMZ_DATE,
+      unsignableHeaders: headersToSkip(),
+    },
+  };
+  const first = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init);
+  const second = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, init);
+  assert.equal(first.headers.get("authorization"), second.headers.get("authorization"));
+  assert.doesNotMatch(first.headers.get("authorization") || "", /x-debug-only/);
+  assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
+});
+
+test("signAwsRequest preserves one-shot unsignableHeaders when options are reused", async () => {
+  function* headersToSkip() {
+    yield "x-debug-only";
+  }
+  const options = {
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "lambda",
+    region: "ap-northeast-1",
+    signingDate: FIXED_AMZ_DATE,
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    headers: {
+      "x-debug-only": "skip-me",
+    },
+    unsignableHeaders: headersToSkip(),
+  };
+  const first = await signAwsRequest(options);
+  const second = await signAwsRequest(options);
+  assert.equal(first.headers.get("authorization"), second.headers.get("authorization"));
+  assert.doesNotMatch(first.headers.get("authorization") || "", /x-debug-only/);
+  assert.doesNotMatch(second.headers.get("authorization") || "", /x-debug-only/);
+});
+
+test("signAwsRequest preserves failed one-shot unsignableHeaders validation", async () => {
+  function* headersToSkip() {
+    yield "x-debug-only";
+    yield "";
+  }
+  const options = {
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "lambda",
+    region: "ap-northeast-1",
+    signingDate: FIXED_AMZ_DATE,
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    headers: {
+      "x-debug-only": "skip-me",
+    },
+    unsignableHeaders: headersToSkip(),
+  };
+  const message = /unsignableHeaders must contain only non-empty strings/;
+  await assert.rejects(() => signAwsRequest(options), message);
+  await assert.rejects(() => signAwsRequest(options), message);
 });
 
 test("SigV4Client rereads reusable unsignableHeaders iterables", async () => {

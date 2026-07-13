@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { RFC3986_EXTRA_ESCAPE_RE } from "./constants.js";
+const RFC3986_EXTRA_ESCAPE_RE = /[!'()*]/g;
 
 export interface ParsedRequestUrl {
   url: URL;
@@ -84,7 +84,7 @@ export function canonicalQuery(search: string): string {
       const separator = part.indexOf("=");
       const key = separator === -1 ? part : part.slice(0, separator);
       const value = separator === -1 ? "" : part.slice(separator + 1);
-      return [canonicalQueryComponent(key), canonicalQueryComponent(value)] as const;
+      return [canonicalUriComponent(key), canonicalUriComponent(value)] as const;
     })
     .sort(([ak, av], [bk, bv]) => compareCodepoint(ak, bk) || compareCodepoint(av, bv))
     .map(([key, value]) => `${key}=${value}`)
@@ -105,10 +105,6 @@ function stripUrlFragment(value: string): string {
 
 function hasMalformedPercentEncoding(value: string): boolean {
   return /%(?![0-9A-Fa-f]{2})/u.test(value);
-}
-
-function canonicalQueryComponent(value: string): string {
-  return canonicalUriComponent(value);
 }
 
 function compareCodepoint(left: string, right: string): -1 | 0 | 1 {

@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { AWS_REQUEST, LOWER_HEX, textEncoder } from "./constants.js";
+import { AWS_REQUEST, textEncoder } from "./constants.js";
 import type { SigningKeyCache } from "./types.js";
+
+const LOWER_HEX = "0123456789abcdef";
 
 interface SignatureOptions {
   secretAccessKey: string;

@@ -545,3 +545,16 @@ test("signed S3 payloads send x-amz-content-sha256", async () => {
     /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
   );
 });
+
+test("signed empty S3 payloads send the empty SHA-256 hash", async () => {
+  const signed = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/empty.txt`,
+    unsignedPayload: false,
+  });
+  assert.equal(
+    signed.headers.get("x-amz-content-sha256"),
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  );
+  assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;x-amz-content-sha256;x-amz-date/);
+});

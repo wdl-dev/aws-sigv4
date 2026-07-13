@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { AUTH_PARAM_SEPARATOR_RE, CONTROL_CHAR_RE, WHITESPACE_RE } from "./constants.js";
 import { optionalAmzDate } from "./date.js";
 import type { SigV4RequestSigningOptions, SignAwsRequestOptions, SigningKeyCache } from "./types.js";
 import { rejectNonPrintableAscii } from "./validation.js";
+
+const AUTH_PARAM_SEPARATOR_RE = /[,=;]/u;
+const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/u;
+const WHITESPACE_RE = /\s/u;
 
 const CLIENT_SIGNING_OPTION_KEYS = new Set([
   "service",
@@ -15,15 +18,37 @@ const CLIENT_SIGNING_OPTION_KEYS = new Set([
   "unsignableHeaders",
   "doubleUrlEncode",
 ]);
+const UNSIGNABLE_HEADER_SNAPSHOTS = new WeakMap<
+  object,
+  {
+    source: object & Iterable<string>;
+    result: { ok: true; value: string[] | undefined } | { ok: false; error: unknown };
+  }
+>();
+
+export interface NormalizedClientSigningOptions {
+  service?: string | undefined;
+  region?: string | undefined;
+  signingDate?: string | undefined;
+  unsignedPayload?: boolean | undefined;
+  signAllHeaders?: boolean | undefined;
+  unsignableHeaders?: string[] | undefined;
+  doubleUrlEncode?: boolean | undefined;
+}
 
 export function snapshotSignAwsRequestOptions(value: unknown): SignAwsRequestOptions {
   requireOptionsObject(value, "signAwsRequest options are required");
   const snapshot = { ...(value as SignAwsRequestOptions) };
   validateCredentialOptions(snapshot, "signAwsRequest options are required");
+  snapshot.unsignableHeaders = snapshotUnsignableHeaders(
+    value as object,
+    snapshot.unsignableHeaders,
+    "unsignableHeaders"
+  );
   return snapshot;
 }
 
-export function normalizeClientSigningOptions(options: unknown): SigV4RequestSigningOptions {
+export function normalizeClientSigningOptions(options: unknown): NormalizedClientSigningOptions {
   if (options === undefined) {
     return {};
   }
@@ -42,7 +67,7 @@ export function normalizeClientSigningOptions(options: unknown): SigV4RequestSig
     signingDate: optionalAmzDate(nullAsUndefined(source.signingDate)),
     unsignedPayload: optionalBoolean(source.unsignedPayload, "init.signing.unsignedPayload"),
     signAllHeaders: optionalBoolean(source.signAllHeaders, "init.signing.signAllHeaders"),
-    unsignableHeaders: normalizeUnsignableHeaders(source.unsignableHeaders, "init.signing.unsignableHeaders"),
+    unsignableHeaders: snapshotUnsignableHeaders(options, source.unsignableHeaders, "init.signing.unsignableHeaders"),
     doubleUrlEncode: optionalBoolean(source.doubleUrlEncode, "init.signing.doubleUrlEncode"),
   };
 }
@@ -166,6 +191,30 @@ export function normalizeUnsignableHeaders(value: unknown, name: string): string
   });
 }
 
+function snapshotUnsignableHeaders(owner: object, source: unknown, name: string): string[] | undefined {
+  if (source === undefined) {
+    return undefined;
+  }
+  if (!isIterable(source) || !isOneShotIterable(source)) {
+    return normalizeUnsignableHeaders(source, name);
+  }
+  const cached = UNSIGNABLE_HEADER_SNAPSHOTS.get(owner);
+  if (cached?.source === source) {
+    if (cached.result.ok) {
+      return cached.result.value;
+    }
+    throw cached.result.error;
+  }
+  try {
+    const value = normalizeUnsignableHeaders(source, name);
+    UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, result: { ok: true, value } });
+    return value;
+  } catch (error) {
+    UNSIGNABLE_HEADER_SNAPSHOTS.set(owner, { source, result: { ok: false, error } });
+    throw error;
+  }
+}
+
 export function requireOptionsObject(value: unknown, message: string): void {
   if (value === null || typeof value !== "object") {
     throw new TypeError(message);
@@ -228,6 +277,18 @@ function optionalCredentialComponent(value: unknown, name: string): string | und
 
 function nullAsUndefined(value: unknown): unknown {
   return value === null ? undefined : value;
+}
+
+function isOneShotIterable(value: Iterable<string>): boolean {
+  return Object.is(value[Symbol.iterator](), value);
+}
+
+function isIterable(value: unknown): value is object & Iterable<string> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function"
+  );
 }
 
 function isSigningCache(value: unknown): value is SigningKeyCache {

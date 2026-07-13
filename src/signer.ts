@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareHashedBody, type PreparedBody } from "./body.js";
+import { prepareSigningBody, type PreparedBody } from "./body.js";
 import {
   AMZ_CONTENT_SHA256_HEADER,
   AMZ_DATE_HEADER,
@@ -10,7 +10,6 @@ import {
   AWS_ALGORITHM,
   AWS_REQUEST,
   HOST_HEADER,
-  UNSIGNED_PAYLOAD,
 } from "./constants.js";
 import { sha256Hex, signatureHex } from "./crypto.js";
 import { formatAmzDate, optionalAmzDate } from "./date.js";
@@ -26,20 +25,15 @@ import {
   validateCredentialOptions,
 } from "./options.js";
 import { defaultMethod, normalizeMethod, rejectEmptyHeader } from "./request.js";
-import { abortReason } from "./retry.js";
 import type { SignAwsRequestOptions, SignedAwsRequest } from "./types.js";
 import { canonicalPathname, canonicalQuery, parseRequestUrl, type ParsedRequestUrl } from "./url.js";
 
 export async function signAwsRequest(options: SignAwsRequestOptions): Promise<SignedAwsRequest> {
   const snapshot = snapshotSignAwsRequestOptions(options);
   const signal = snapshot.signal ?? undefined;
-  if (signal !== undefined) {
-    throwIfSigningSignalAborted(signal);
-  }
+  signal?.throwIfAborted();
   const signed = await signAwsRequestInternal(snapshot);
-  if (signal !== undefined) {
-    throwIfSigningSignalAborted(signal);
-  }
+  signal?.throwIfAborted();
   return signed;
 }
 
@@ -69,10 +63,6 @@ export async function signAwsRequestInternal(
     optionalBoolean(options.doubleUrlEncode, "doubleUrlEncode"),
     options.service
   );
-  if (unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
-    headers.set(AMZ_CONTENT_SHA256_HEADER, UNSIGNED_PAYLOAD);
-  }
-
   const explicitAmzDate = optionalAmzDate(options.signingDate);
   headers.set(HOST_HEADER, url.host);
   if (options.sessionToken) {
@@ -90,7 +80,12 @@ export async function signAwsRequestInternal(
   // fetch() can supply the stable snapshot it already hashed or prepared for replay.
   const preparedBody =
     reusablePreparedBody ??
-    (await prepareHashedBody(options.body, headers, unsignedPayload, false, options.signal ?? undefined));
+    (await prepareSigningBody(options.body, headers, {
+      service: options.service,
+      unsignedPayload,
+      replay: false,
+      signal: options.signal ?? undefined,
+    }));
 
   // Capture the default clock after body preparation so slow streams do not stale the signature timestamp.
   const amzDate = explicitAmzDate ?? formatAmzDate(new Date());
@@ -99,10 +94,7 @@ export async function signAwsRequestInternal(
 
   headers.set(AMZ_DATE_HEADER, amzDate);
 
-  const canonicalPayloadHash = await canonicalPayloadHashValue(headers, preparedBody.bytes);
-  if (options.service === "s3" && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
-    headers.set(AMZ_CONTENT_SHA256_HEADER, canonicalPayloadHash);
-  }
+  const canonicalPayloadHash = preparedBody.payloadHash;
   const { canonicalHeaders, signedHeaders } = canonicalHeaderBlock(url, headers, {
     service: options.service,
     signAllHeaders,
@@ -144,18 +136,4 @@ export async function signAwsRequestInternal(
     headers,
     body: preparedBody.body,
   };
-}
-
-async function canonicalPayloadHashValue(headers: Headers, body: Uint8Array): Promise<string> {
-  const explicit = headers.get(AMZ_CONTENT_SHA256_HEADER);
-  if (explicit) {
-    return explicit;
-  }
-  return sha256Hex(body);
-}
-
-function throwIfSigningSignalAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw abortReason(signal);
-  }
 }

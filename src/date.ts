@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { ISO_DATE_RE, SIGNING_DATE_ERROR } from "./constants.js";
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/u;
+const SIGNING_DATE_ERROR = "signingDate must be a valid Date, ISO-8601 string, or YYYYMMDDTHHMMSSZ string";
 
 export function optionalAmzDate(value: unknown): string | undefined {
   if (value === undefined || value === null) {

@@ -11,8 +11,8 @@ export default {
   async test() {
     await assertGoldenSignature();
     await assertClientFetch();
-    await assertOverrideCannotDropSourceSignal();
-    await assertNoCorsOverrideRuntimeBoundary();
+    await assertSourceSignalPropagation();
+    await assertFetchIgnoresSignOverride();
   },
 };
 
@@ -70,7 +70,7 @@ async function assertClientFetch() {
   }
 }
 
-async function assertOverrideCannotDropSourceSignal() {
+async function assertSourceSignalPropagation() {
   const controller = new AbortController();
   const reason = { code: "workerd-source-aborted" };
   let fetchCalls = 0;
@@ -82,19 +82,14 @@ async function assertOverrideCannotDropSourceSignal() {
     fetch: async (request) => {
       fetchCalls += 1;
       if (!request.headers.get("authorization")?.startsWith("AWS4-HMAC-SHA256 ")) {
-        throw new Error("override transport request lost authorization");
+        throw new Error("transport request lost authorization");
       }
       controller.abort(reason);
-      assertEqual(request.signal.aborted, true, "override transport signal state");
-      assertEqual(request.signal.reason, reason, "override transport signal reason");
+      assertEqual(request.signal.aborted, true, "transport signal state");
+      assertEqual(request.signal.reason, reason, "transport signal reason");
       throw reason;
     },
   });
-  const defaultSign = client.sign;
-  client.sign = async function signWithoutSourceSignal(input, init) {
-    const signed = await defaultSign.call(this, input, init);
-    return new Request(signed, { signal: null });
-  };
   let caught;
   try {
     await client.fetch("https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms", {
@@ -104,36 +99,40 @@ async function assertOverrideCannotDropSourceSignal() {
   } catch (error) {
     caught = error;
   }
-  assertEqual(caught, reason, "override source abort reason");
-  assertEqual(fetchCalls, 1, "override transport calls");
+  assertEqual(caught, reason, "source abort reason");
+  assertEqual(fetchCalls, 1, "transport calls");
 }
 
-async function assertNoCorsOverrideRuntimeBoundary() {
+async function assertFetchIgnoresSignOverride() {
   let fetchCalls = 0;
+  let signCalls = 0;
   const client = new SigV4Client({
     accessKeyId: ACCESS_KEY_ID,
     secretAccessKey: SECRET_ACCESS_KEY,
     service: "lambda",
     region: "ap-northeast-1",
+    retries: 1,
+    initialRetryDelayMs: 0,
     fetch: async (request) => {
       fetchCalls += 1;
-      assertEqual(request.mode, undefined, "workerd no-cors mode");
       if (!request.headers.get("authorization")?.startsWith("AWS4-HMAC-SHA256 ")) {
-        throw new Error("no-cors override request lost authorization");
+        throw new Error("fetch request lost authorization");
       }
-      return new Response("ok");
+      return new Response(fetchCalls === 1 ? "retry" : "ok", { status: fetchCalls === 1 ? 500 : 200 });
     },
   });
-  const defaultSign = client.sign;
-  client.sign = async function signWithIgnoredNoCorsMode(input, init) {
-    const signed = await defaultSign.call(this, input, init);
-    return new Request(signed, { mode: "no-cors" });
+  client.sign = async function unexpectedSignHook() {
+    signCalls += 1;
+    throw new Error("fetch must not call an overridden sign method");
   };
   const response = await client.fetch("https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms", {
+    method: "PUT",
+    body: "{}",
     signing: { signingDate: FIXED_AMZ_DATE },
   });
-  assertEqual(response.status, 200, "no-cors override response");
-  assertEqual(fetchCalls, 1, "no-cors override transport calls");
+  assertEqual(response.status, 200, "sign override response");
+  assertEqual(fetchCalls, 2, "sign override transport calls");
+  assertEqual(signCalls, 0, "sign override calls");
 }
 
 function assertEqual(actual, expected, name) {

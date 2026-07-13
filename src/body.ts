@@ -1,22 +1,56 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, textEncoder } from "./constants.js";
+import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, UNSIGNED_PAYLOAD, textEncoder } from "./constants.js";
 import { sha256Hex } from "./crypto.js";
-import { abortReason } from "./retry.js";
 
 export interface PreparedBody {
   body: BodyInit | null | undefined;
-  bytes: Uint8Array;
+  payloadHash: string;
 }
 
-export async function prepareBody(
+interface MaterializedBody {
+  body: BodyInit | null | undefined;
+  bytes?: Uint8Array | undefined;
+}
+
+export interface PrepareBodyOptions {
+  service: string;
+  unsignedPayload: boolean;
+  replay: boolean;
+  signal?: AbortSignal | undefined;
+}
+
+export async function prepareSigningBody(
+  body: BodyInit | null | undefined,
+  headers: Headers,
+  options: PrepareBodyOptions
+): Promise<PreparedBody> {
+  if (options.unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
+    headers.set(AMZ_CONTENT_SHA256_HEADER, UNSIGNED_PAYLOAD);
+  }
+  const hasBody = body !== null && body !== undefined;
+  const computePayloadHash = !headers.has(AMZ_CONTENT_SHA256_HEADER);
+  const materialize = (options.replay && shouldMaterializeBodyForReplay(body)) || (computePayloadHash && hasBody);
+  const prepared = await prepareBody(body, headers, materialize, options.signal);
+  let payloadHash = headers.get(AMZ_CONTENT_SHA256_HEADER);
+  if (payloadHash === null) {
+    payloadHash = await sha256Hex(prepared.bytes ?? new Uint8Array());
+    options.signal?.throwIfAborted();
+    if (hasBody || options.service === "s3") {
+      headers.set(AMZ_CONTENT_SHA256_HEADER, payloadHash);
+    }
+  }
+  return { body: prepared.body, payloadHash };
+}
+
+async function prepareBody(
   body: BodyInit | null | undefined,
   headers: Headers,
   materialize: boolean,
   signal?: AbortSignal
-): Promise<PreparedBody> {
-  throwIfAborted(signal);
+): Promise<MaterializedBody> {
+  signal?.throwIfAborted();
   assertSupportedBody(body);
   if (body === null || body === undefined) {
     return { body, bytes: new Uint8Array() };
@@ -32,23 +66,23 @@ export async function prepareBody(
       signal && request.body
         ? await readStreamBytes(request.body, signal)
         : new Uint8Array(await request.arrayBuffer());
-    throwIfAborted(signal);
+    signal?.throwIfAborted();
     return { body: bytes, bytes };
   }
   setGeneratedContentType(body, headers);
   if (!materialize && (typeof body === "string" || body instanceof Blob || body instanceof ReadableStream)) {
-    return { body, bytes: new Uint8Array() };
+    return { body };
   }
   if (body instanceof ReadableStream) {
     const bytes = await readStreamBytes(body, signal);
     return { body: bytes, bytes };
   }
   const bytes = await bodyBytes(body, signal);
-  throwIfAborted(signal);
+  signal?.throwIfAborted();
   return { body: stableMaterializedBody(body, bytes), bytes };
 }
 
-export function shouldMaterializeBodyForReplay(body: BodyInit | null | undefined): boolean {
+function shouldMaterializeBodyForReplay(body: BodyInit | null | undefined): boolean {
   return body !== undefined && body !== null && typeof body !== "string" && !(body instanceof Blob);
 }
 
@@ -98,30 +132,6 @@ async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Arr
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
 }
 
-export function shouldHashPayload(
-  body: BodyInit | null | undefined,
-  headers: Headers,
-  unsignedPayload: boolean
-): boolean {
-  return body !== undefined && body !== null && !unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER);
-}
-
-export async function prepareHashedBody(
-  body: BodyInit | null | undefined,
-  headers: Headers,
-  unsignedPayload: boolean,
-  materialize = false,
-  signal?: AbortSignal
-): Promise<PreparedBody> {
-  const hashPayload = shouldHashPayload(body, headers, unsignedPayload);
-  const preparedBody = await prepareBody(body, headers, materialize || hashPayload, signal);
-  if (hashPayload) {
-    headers.set(AMZ_CONTENT_SHA256_HEADER, await sha256Hex(preparedBody.bytes));
-    throwIfAborted(signal);
-  }
-  return preparedBody;
-}
-
 async function readStreamBytes(
   stream: ReadableStream<unknown>,
   signal?: AbortSignal
@@ -131,15 +141,15 @@ async function readStreamBytes(
   let byteLength = 0;
   const onAbort = () => {
     if (signal) {
-      void reader.cancel(abortReason(signal)).catch(() => undefined);
+      void reader.cancel(signal.reason).catch(() => undefined);
     }
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
     for (;;) {
-      throwIfAborted(signal);
+      signal?.throwIfAborted();
       const result = await reader.read();
-      throwIfAborted(signal);
+      signal?.throwIfAborted();
       if (result.done) {
         break;
       }
@@ -153,7 +163,7 @@ async function readStreamBytes(
     }
   } catch (err) {
     if (signal?.aborted) {
-      throw abortReason(signal);
+      throw signal.reason;
     }
     void reader.cancel(err).catch(() => undefined);
     throw err;
@@ -193,12 +203,6 @@ function assertSupportedBody(body: BodyInit | null | undefined): void {
     throw new TypeError("async iterable bodies are not supported; use a ReadableStream");
   }
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw abortReason(signal);
-  }
 }
 
 function stableMaterializedBody(body: BodyInit, bytes: Uint8Array): BodyInit {
