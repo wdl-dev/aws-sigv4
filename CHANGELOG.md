@@ -42,6 +42,9 @@ SPDX-License-Identifier: Apache-2.0
 - The custom transport type now reflects its runtime contract as
   `(request: Request) => Promise<Response>`; transports must honor the request
   signal and preserve manual redirect mode.
+- The `unsignableHeaders` type now excludes bare strings, matching their existing
+  runtime rejection. Use an array, Set, or another object iterable of header
+  names.
 - Client credentials and transport configuration now use native private fields.
   Concurrent cold-cache signing for the same credential scope shares one
   signing-key derivation.

@@ -196,11 +196,13 @@ preserves the exact abort reason.
 ## Retries, redirects, and custom transports
 
 `retries` defaults to `0`; delay defaults are 50 ms initially and 5000 ms maximum.
-Configured retries apply to 5xx and 429 responses and non-abort transport
-rejections for `GET`, `HEAD`, `OPTIONS`, `PUT`, and `DELETE`. Delays use full
-jitter over capped exponential backoff; `Retry-After` is not interpreted. Keep
-retries disabled when a nominally idempotent operation is not safe to replay at
-the application layer.
+The retry count must be a non-negative safe integer, and both delay values must
+be non-negative finite numbers. Explicit `null` values are rejected rather than
+treated as defaults. Configured retries apply to 5xx and 429 responses and
+non-abort transport rejections for `GET`, `HEAD`, `OPTIONS`, `PUT`, and `DELETE`.
+Delays use full jitter over capped exponential backoff; `Retry-After` is not
+interpreted. Keep retries disabled when a nominally idempotent operation is not
+safe to replay at the application layer.
 
 `fetch()` owns its signing path and does not call an overridden `client.sign()`
 method. Use a custom transport for logging, instrumentation, or transport policy
