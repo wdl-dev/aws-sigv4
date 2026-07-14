@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { AWS_REQUEST, LOWER_HEX, textEncoder } from "./constants.js";
+import { AWS_REQUEST, textEncoder } from "./constants.js";
 import type { SigningKeyCache } from "./types.js";
+
+const LOWER_HEX = "0123456789abcdef";
 
 interface SignatureOptions {
   secretAccessKey: string;
@@ -14,18 +16,62 @@ interface SignatureOptions {
   cache?: SigningKeyCache | undefined;
 }
 
+const inFlightSigningKeys = new WeakMap<SigningKeyCache, Map<string, Promise<ArrayBuffer>>>();
+
 export async function signatureHex(options: SignatureOptions): Promise<string> {
-  const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
-  const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
-  let signingKey = options.cache?.get(cacheKey);
-  if (!signingKey) {
-    const kDate = await hmac(`AWS4${options.secretAccessKey}`, options.date);
-    const kRegion = await hmac(kDate, options.region);
-    const kService = await hmac(kRegion, options.service);
-    signingKey = await hmac(kService, AWS_REQUEST);
-    options.cache?.set(cacheKey, signingKey);
+  let signingKey: ArrayBuffer;
+  if (options.cache === undefined) {
+    signingKey = await deriveSigningKey(options);
+  } else {
+    const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
+    const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
+    const cachedSigningKey = options.cache.get(cacheKey);
+    signingKey = isSigningKeyCacheMiss(cachedSigningKey)
+      ? await deriveCachedSigningKey(options, options.cache, cacheKey)
+      : cachedSigningKey;
   }
   return hex(await hmac(signingKey, options.stringToSign));
+}
+
+function isSigningKeyCacheMiss(value: unknown): value is null | undefined {
+  return value === undefined || value === null;
+}
+
+async function deriveCachedSigningKey(
+  options: SignatureOptions,
+  cache: SigningKeyCache,
+  cacheKey: string
+): Promise<ArrayBuffer> {
+  let byKey = inFlightSigningKeys.get(cache);
+  if (byKey === undefined) {
+    byKey = new Map();
+    inFlightSigningKeys.set(cache, byKey);
+  }
+  const existing = byKey.get(cacheKey);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const derivation = (async () => {
+    try {
+      const signingKey = await deriveSigningKey(options);
+      cache.set(cacheKey, signingKey);
+      return signingKey;
+    } finally {
+      byKey.delete(cacheKey);
+      if (byKey.size === 0) {
+        inFlightSigningKeys.delete(cache);
+      }
+    }
+  })();
+  byKey.set(cacheKey, derivation);
+  return derivation;
+}
+
+async function deriveSigningKey(options: SignatureOptions): Promise<ArrayBuffer> {
+  const kDate = await hmac(`AWS4${options.secretAccessKey}`, options.date);
+  const kRegion = await hmac(kDate, options.region);
+  const kService = await hmac(kRegion, options.service);
+  return hmac(kService, AWS_REQUEST);
 }
 
 export async function sha256Hex(value: string | Uint8Array | ArrayBuffer): Promise<string> {

@@ -35,15 +35,6 @@ export const DEFAULT_UNSIGNABLE_HEADERS = new Set([
   "x-amzn-trace-id",
 ]);
 
-export const RFC3986_EXTRA_ESCAPE_RE = /[!'()*]/g;
-export const LOWER_HEX = "0123456789abcdef";
 export const AWS_ALGORITHM = "AWS4-HMAC-SHA256";
 export const AWS_REQUEST = "aws4_request";
 export const UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD";
-export const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/u;
-export const WHITESPACE_RE = /\s/u;
-export const AUTH_PARAM_SEPARATOR_RE = /[,=;]/u;
-export const HTTP_METHOD_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
-export const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/u;
-export const SIGNING_DATE_ERROR = "signingDate must be a valid Date, ISO-8601 string, or YYYYMMDDTHHMMSSZ string";
-export const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]);

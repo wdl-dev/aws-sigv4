@@ -7,6 +7,71 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Breaking changes
+
+- Path signing now follows AWS service defaults: S3 paths remain single-encoded,
+  while other services use double-encoded, normalized paths. Explicit
+  `doubleUrlEncode` values still override the default; set it to `false` to
+  preserve the previous non-S3 behavior.
+- `SigV4Client.fetch()` now owns its signing path and no longer invokes an
+  overridden `sign()` method. Put logging, instrumentation, and transport policy
+  in the custom transport instead.
+- `SigV4Client.fetch()` now sends with `redirect: "manual"`, rejects automatic
+  redirect following, and rejects `mode: "no-cors"`. Submit an accepted redirect
+  target as a new signed request.
+- `Request` input bodies are transferred instead of cloned, avoiding an unread
+  tee branch. Create separate requests from replayable bytes when the original
+  request must remain reusable.
+- Credential `service` and `region` values must be lowercase. Entries in
+  `unsignableHeaders` must be valid header names and can no longer exclude
+  request `x-amz-*` headers or S3 `content-md5`.
+- Retry counts must be non-negative safe integers. Retry counts and delay bounds
+  reject explicit `null` instead of treating it as a default.
+
+### Added
+
+- `signAwsRequest()` now accepts a `signal`, and `SigV4RequestInit` exposes
+  `duplex?: "half"` for streaming request bodies.
+
+### Changed
+
+- Signing and retries now use a stable snapshot of the effective target, request
+  state, options, headers, and mutable or replayable body data. Retry attempts
+  reuse the materialized body and payload hash without repeating library-level
+  snapshotting, materialization, or hashing.
+- Public types now match the runtime contracts: custom transports use
+  `(request: Request) => Promise<Response>`, `unsignableHeaders` excludes bare
+  strings, and `SigningKeyCache.get()` may return `null` for a cache miss.
+- Client credentials and transport configuration use native private fields, and
+  concurrent cold-cache signing for one credential scope shares a signing-key
+  derivation.
+
+### Fixed
+
+- Raw string URLs now receive the required second path-encoding pass for
+  double-encoded services. Raw controls and other characters that cannot survive
+  transport unchanged are rejected instead of producing unverifiable signatures.
+- Request signal/body inheritance now follows platform semantics. Used Request
+  bodies, disturbed or locked streams, unsupported body objects, non-standard
+  async iterables, and Fetch-forbidden client methods fail before transport;
+  bodies remain stable whenever hashing or retry replay requires fixed bytes.
+- Redirect handling now works on workerd. Custom transports fail closed after
+  redirects or cancellation, and exact abort reasons propagate through body
+  handling, transport, response cleanup, and retry waits.
+- Malformed UTF-16 secret access keys are now rejected because UTF-8 replacement
+  could otherwise alias distinct JavaScript strings; well-formed Unicode secrets
+  remain supported.
+
+### Documentation and tooling
+
+- Documented the supported runtime, HTTPS, body-memory, signed-header, cache,
+  custom-transport, and real AWS S3 integration contracts.
+- CI now exercises Lambda and S3 behavior on pinned `workerd@1.20260701.1` with
+  compatibility date `2026-07-01`.
+- Package validation checks the exact tarball and a strict consumer; S3
+  integration requires an explicit mode, and both registries receive the same
+  validated artifact after the required main-branch CI jobs pass.
+
 ## 2.0.0
 
 - Breaking: signed header values, session tokens, and credential scope

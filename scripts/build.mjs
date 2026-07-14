@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import ts from "typescript";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const outDir = join(rootDir, "dist");
-const workDir = mkdtempSync(join(tmpdir(), "aws-sigv4-build-"));
 const tscBin = join(rootDir, "node_modules", "typescript", "bin", "tsc");
 const publicValueExports = ["SigV4Client", "signAwsRequest"].sort();
 const publicTypeExports = [
@@ -22,10 +22,12 @@ const publicTypeExports = [
 const publicDeclarationNames = [...publicValueExports, ...publicTypeExports].sort();
 const moduleTextCache = new Map();
 
-// This is a package-specific bundler for this repo's TypeScript output, not a general-purpose bundler.
+// This is a package-specific, single-writer CI bundler for this repo, not a general-purpose bundler.
+let workDir;
+let stagedOutDir;
 try {
-  rmSync(outDir, { force: true, recursive: true });
-  mkdirSync(outDir, { recursive: true });
+  workDir = mkdtempSync(join(tmpdir(), "aws-sigv4-build-"));
+  stagedOutDir = mkdtempSync(join(rootDir, ".aws-sigv4-dist-"));
   runTypeScript([
     "--project",
     "tsconfig.json",
@@ -37,16 +39,23 @@ try {
     "true",
   ]);
 
-  const outputJavaScript = join(outDir, "index.js");
-  const outputDeclarations = join(outDir, "index.d.ts");
+  const outputJavaScript = join(stagedOutDir, "index.js");
+  const outputDeclarations = join(stagedOutDir, "index.d.ts");
   writeFileSync(outputJavaScript, bundleJavaScript(workDir));
   writeFileSync(outputDeclarations, bundleDeclarations(workDir));
 
   execFileSync(process.execPath, ["--check", outputJavaScript], { cwd: rootDir, stdio: "inherit" });
   checkBundleSurface(outputJavaScript, outputDeclarations);
   checkDeclarations(outputDeclarations);
+  rmSync(outDir, { force: true, recursive: true });
+  renameSync(stagedOutDir, outDir);
 } finally {
-  rmSync(workDir, { force: true, recursive: true });
+  if (workDir !== undefined) {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+  if (stagedOutDir !== undefined) {
+    rmSync(stagedOutDir, { force: true, recursive: true });
+  }
 }
 
 function runTypeScript(args) {
@@ -114,6 +123,7 @@ function sortedModules(moduleDir, entry, declarations) {
 }
 
 function moduleDependencies(code, file, declarations) {
+  assertModuleLikeLinesAreSyntax(code, file, declarations);
   const dependencies = [];
   for (const [index, line] of code.split("\n").entries()) {
     const trimmed = line.trim();
@@ -159,6 +169,29 @@ function moduleDependencies(code, file, declarations) {
     );
   }
   return dependencies;
+}
+
+function assertModuleLikeLinesAreSyntax(code, file, declarations) {
+  const source = ts.createSourceFile(
+    file,
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    declarations ? ts.ScriptKind.TS : ts.ScriptKind.JS
+  );
+  let lineStart = 0;
+  for (const [index, line] of code.split("\n").entries()) {
+    const match = /^(\s*)(import|export)\b/u.exec(line);
+    if (match) {
+      const keywordPosition = lineStart + match[1].length;
+      const token = ts.getTokenAtPosition(source, keywordPosition);
+      const expectedKind = match[2] === "import" ? ts.SyntaxKind.ImportKeyword : ts.SyntaxKind.ExportKeyword;
+      if (token.kind !== expectedKind || token.getStart(source) !== keywordPosition) {
+        throwUnsupportedModuleSyntax(file, index, "module-like text inside a string or comment cannot be line-bundled");
+      }
+    }
+    lineStart += line.length + 1;
+  }
 }
 
 function resolveModuleSpecifier(file, lineIndex, specifier, declarations) {

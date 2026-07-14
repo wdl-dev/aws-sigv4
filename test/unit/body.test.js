@@ -86,21 +86,78 @@ test("SigV4Client.sign supports ReadableStream bodies", async () => {
   assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;x-amz-content-sha256;x-amz-date/);
 });
 
-test("payload hashing sends stable URLSearchParams bytes", async () => {
-  class UnstableParams extends URLSearchParams {
-    calls = 0;
+for (const [name, sign, method, url] of [
+  ["payload hashing", lambdaRequest, "POST", `${LAMBDA_ENDPOINT}/2025-09-09/microvms`],
+  ["S3 unsigned payload", s3Request, "PUT", `${S3_ENDPOINT}/example-bucket/disturbed.txt`],
+]) {
+  test(`${name} rejects disturbed ReadableStream bodies without consuming remaining bytes`, async () => {
+    for (const consumeAll of [false, true]) {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("part1"));
+          controller.enqueue(new TextEncoder().encode("part2"));
+          controller.close();
+        },
+      });
+      const reader = body.getReader();
+      assert.equal(new TextDecoder().decode((await reader.read()).value), "part1");
+      if (consumeAll) {
+        assert.equal(new TextDecoder().decode((await reader.read()).value), "part2");
+      }
+      reader.releaseLock();
 
-    toString() {
-      this.calls += 1;
-      return this.calls === 1 ? "a=1" : "a=2";
+      await assert.rejects(
+        () =>
+          sign({
+            method,
+            url,
+            body,
+          }),
+        /ReadableStream body must not be disturbed or locked/
+      );
+      assert.equal(body.locked, false);
+      if (!consumeAll) {
+        const remainingReader = body.getReader();
+        assert.equal(new TextDecoder().decode((await remainingReader.read()).value), "part2");
+        remainingReader.releaseLock();
+      }
     }
-  }
+  });
+}
+
+test("payload hashing cancels streams that yield invalid chunks", async () => {
+  let cancelReason;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Int8Array([1]));
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  await assert.rejects(
+    () =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        body,
+      }),
+    /ReadableStream body must yield Uint8Array chunks/
+  );
+  assert.match(cancelReason?.message || "", /ReadableStream body must yield Uint8Array chunks/);
+  assert.equal(body.locked, false);
+});
+
+test("payload hashing sends stable URLSearchParams bytes", async () => {
+  const body = new URLSearchParams({ a: "1" });
   const client = lambdaClient();
-  const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+  const pending = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
     method: "POST",
-    body: new UnstableParams(),
+    body,
     signing: { signingDate: FIXED_AMZ_DATE },
   });
+  body.set("a", "2");
+  const signed = await pending;
   assert.equal(await signed.text(), "a=1");
   assert.equal(
     signed.headers.get("x-amz-content-sha256"),
@@ -109,24 +166,43 @@ test("payload hashing sends stable URLSearchParams bytes", async () => {
 });
 
 test("payload hashing sends stable Blob bytes", async () => {
-  class UnstableBlob extends Blob {
-    calls = 0;
-
-    async arrayBuffer() {
-      this.calls += 1;
-      return new TextEncoder().encode(this.calls === 1 ? "blob=1" : "blob=2").buffer;
-    }
-  }
   const client = lambdaClient();
+  const body = new Blob(["blob=1"], { type: "text/plain" });
+  const signal = new AbortController().signal;
   const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
     method: "POST",
-    body: new UnstableBlob([], { type: "text/plain" }),
+    body,
+    signal,
     signing: { signingDate: FIXED_AMZ_DATE },
   });
+  assert.equal(signed.headers.get("content-type"), "text/plain");
   assert.equal(await signed.text(), "blob=1");
   assert.equal(
     signed.headers.get("x-amz-content-sha256"),
     "ff6f2bbd6e6921803074834e09a2372e15f5ab7d4b962d23e38c98d5d97696ee"
+  );
+});
+
+test("SigV4Client.sign snapshots mutable headers and bytes before returning", async () => {
+  const headers = new Headers({ "x-before": "yes" });
+  const body = new TextEncoder().encode("one");
+  const pending = lambdaClient().sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    method: "POST",
+    headers,
+    body,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  headers.set("x-after", "must-not-be-signed");
+  body.set(new TextEncoder().encode("two"));
+  const signed = await pending;
+  assert.equal(signed.headers.get("x-before"), "yes");
+  assert.equal(signed.headers.get("x-after"), null);
+  assert.match(signed.headers.get("authorization") || "", /x-before/);
+  assert.doesNotMatch(signed.headers.get("authorization") || "", /x-after/);
+  assert.equal(await signed.text(), "one");
+  assert.equal(
+    signed.headers.get("x-amz-content-sha256"),
+    "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed"
   );
 });
 
@@ -154,6 +230,8 @@ test("SigV4Client.sign does not fully buffer unsigned S3 Request streams", async
   assert.equal(signed.headers.get("x-amz-content-sha256"), "UNSIGNED-PAYLOAD");
   assert.equal(await signed.text(), "123");
   assert.equal(pulls, 3);
+  assert.equal(request.bodyUsed, true);
+  await assert.rejects(() => request.text(), /Body has already been read|unusable|locked/iu);
 });
 
 test("SigV4Client.fetch does not fully buffer unsigned S3 Request streams by default", async () => {
@@ -185,6 +263,234 @@ test("SigV4Client.fetch does not fully buffer unsigned S3 Request streams by def
   });
   assert.equal(response.status, 200);
   assert.equal(pulls, 3);
+  assert.equal(request.bodyUsed, true);
+  await assert.rejects(() => request.text(), /Body has already been read|unusable|locked/iu);
+});
+
+test("body materialization cancels promptly and preserves the exact abort reason", { timeout: 2_000 }, async () => {
+  let readStartedResolve;
+  const readStarted = new Promise((resolve) => {
+    readStartedResolve = resolve;
+  });
+  let cancelReason;
+  const body = new ReadableStream({
+    pull() {
+      readStartedResolve();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const controller = new AbortController();
+  const reason = { code: "stop-materializing" };
+  let fetchCalls = 0;
+  const client = lambdaClient({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("unreachable");
+    },
+  });
+  const pending = client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    method: "POST",
+    body,
+    signal: controller.signal,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  await readStarted;
+  controller.abort(reason);
+  let caught;
+  try {
+    await pending;
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(caught, reason);
+  assert.equal(cancelReason, reason);
+  assert.equal(fetchCalls, 0);
+});
+
+test("signAwsRequest rejects pre-aborted body materialization without reading the stream", async () => {
+  let pulls = 0;
+  const body = new ReadableStream(
+    {
+      pull() {
+        pulls += 1;
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const controller = new AbortController();
+  const reason = { code: "signing-pre-aborted" };
+  controller.abort(reason);
+  let caught;
+  try {
+    await lambdaRequest({
+      method: "POST",
+      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+      body,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught, reason);
+  assert.equal(pulls, 0);
+  assert.equal(body.locked, false);
+});
+
+test("signAwsRequest aborts stream materialization with the exact reason", { timeout: 2_000 }, async () => {
+  let readStartedResolve;
+  const readStarted = new Promise((resolve) => {
+    readStartedResolve = resolve;
+  });
+  let cancelReason;
+  const body = new ReadableStream(
+    {
+      pull() {
+        readStartedResolve();
+        return new Promise(() => {});
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const controller = new AbortController();
+  const reason = { code: "stop-direct-signing" };
+  const pending = lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    body,
+    signal: controller.signal,
+  });
+  await readStarted;
+  controller.abort(reason);
+  let caught;
+  try {
+    await pending;
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught, reason);
+  assert.equal(cancelReason, reason);
+  assert.equal(body.locked, false);
+});
+
+test("fetch body materialization inherits a Request input signal", async () => {
+  let pulls = 0;
+  const body = new ReadableStream(
+    {
+      pull() {
+        pulls += 1;
+        return new Promise(() => {});
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const controller = new AbortController();
+  const reason = { code: "request-input-abort" };
+  controller.abort(reason);
+  const request = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    method: "POST",
+    body,
+    duplex: "half",
+    signal: controller.signal,
+  });
+  let fetchCalls = 0;
+  const client = lambdaClient({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("unreachable");
+    },
+  });
+  let caught;
+  try {
+    await client.fetch(request, { signing: { signingDate: FIXED_AMZ_DATE } });
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught, reason);
+  assert.equal(pulls, 0);
+  assert.equal(fetchCalls, 0);
+});
+
+test("an explicit null signal does not inherit the Request input signal", async () => {
+  const controller = new AbortController();
+  controller.abort("ignored-input-abort");
+  const request = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    method: "POST",
+    body: "hello",
+    signal: controller.signal,
+  });
+  let fetchedBody;
+  const response = await lambdaClient({
+    fetch: async (signed) => {
+      fetchedBody = await signed.text();
+      return new Response("ok");
+    },
+  }).fetch(request, {
+    signal: null,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(fetchedBody, "hello");
+});
+
+test("async iterable bodies are rejected before transport", async () => {
+  let iterations = 0;
+  const body = {
+    async *[Symbol.asyncIterator]() {
+      iterations += 1;
+      yield "hello";
+    },
+  };
+  let fetchCalls = 0;
+  const client = s3Client({
+    retries: 1,
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("unreachable");
+    },
+  });
+  await assert.rejects(
+    () =>
+      client.fetch(`${S3_ENDPOINT}/example-bucket/async-iterable.txt`, {
+        method: "PUT",
+        body,
+        duplex: "half",
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /async iterable bodies are not supported/
+  );
+  assert.equal(iterations, 0);
+  assert.equal(fetchCalls, 0);
+});
+
+test("unsupported body objects are rejected with a stable error", async () => {
+  const attempts = [
+    () =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        body: {},
+      }),
+    () =>
+      s3Request({
+        method: "PUT",
+        url: `${S3_ENDPOINT}/example-bucket/unsupported-body.txt`,
+        body: {},
+      }),
+    () =>
+      s3Client().sign(`${S3_ENDPOINT}/example-bucket/unsupported-body.txt`, {
+        method: "PUT",
+        body: {},
+        signing: { signAllHeaders: true, signingDate: FIXED_AMZ_DATE },
+      }),
+  ];
+  for (const attempt of attempts) {
+    await assert.rejects(attempt, /body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView/);
+  }
 });
 
 test("explicit x-amz-content-sha256 controls the canonical payload hash", async () => {
@@ -265,16 +571,20 @@ test("S3 unsigned FormData signs the generated boundary", async () => {
   assert.match(await signed.clone().text(), new RegExp(boundary));
 });
 
-test("payload hashing reuses Uint8Array bodies without copying", async () => {
+test("payload hashing snapshots Uint8Array bodies before asynchronous digest completion", async () => {
   const body = new Uint8Array([123, 34, 111, 107, 34, 58, 116, 114, 117, 101, 125]);
+  const expectedBody = new Uint8Array(body);
   const digestInputs = [];
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   crypto.subtle.digest = async (algorithm, data) => {
     digestInputs.push(data);
-    return originalDigest(algorithm, data);
+    const digest = await originalDigest(algorithm, data);
+    body.fill(66);
+    return digest;
   };
+  let signed;
   try {
-    await lambdaRequest({
+    signed = await lambdaRequest({
       method: "POST",
       url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
       headers: {
@@ -285,7 +595,13 @@ test("payload hashing reuses Uint8Array bodies without copying", async () => {
   } finally {
     crypto.subtle.digest = originalDigest;
   }
-  assert.equal(digestInputs.includes(body), true);
+  assert.equal(digestInputs.includes(body), false);
+  assert.notEqual(signed.body, body);
+  assert.deepEqual(signed.body, expectedBody);
+  assert.equal(
+    signed.headers.get("x-amz-content-sha256"),
+    "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93"
+  );
 });
 
 test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () => {
@@ -299,11 +615,25 @@ test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () =
     body,
   });
   assert.ok(signed.body instanceof Uint8Array);
-  assert.equal(signed.body.buffer, body);
+  assert.notEqual(signed.body.buffer, body);
   assert.equal(
     signed.headers.get("x-amz-content-sha256"),
     "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93"
   );
+});
+
+test("payload hashing snapshots ArrayBufferView bodies", async () => {
+  const buffer = new ArrayBuffer(8);
+  const body = new DataView(buffer, 2, 4);
+  new Uint8Array(buffer).set([0, 0, 104, 101, 108, 112, 0, 0]);
+  const signed = await lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    body,
+  });
+  new Uint8Array(buffer).fill(0);
+  assert.equal(new TextDecoder().decode(signed.body), "help");
+  assert.notEqual(signed.body.buffer, buffer);
 });
 
 test("signed S3 payloads send x-amz-content-sha256", async () => {
@@ -321,4 +651,17 @@ test("signed S3 payloads send x-amz-content-sha256", async () => {
     signed.headers.get("authorization") || "",
     /SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date/
   );
+});
+
+test("signed empty S3 payloads send the empty SHA-256 hash", async () => {
+  const signed = await s3Request({
+    method: "GET",
+    url: `${S3_ENDPOINT}/example-bucket/empty.txt`,
+    unsignedPayload: false,
+  });
+  assert.equal(
+    signed.headers.get("x-amz-content-sha256"),
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  );
+  assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;x-amz-content-sha256;x-amz-date/);
 });

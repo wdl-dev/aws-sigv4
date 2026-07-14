@@ -1,4 +1,6 @@
 node_modules/
 coverage/
 dist/
+package.tgz
+.aws-sigv4-dist-*
 .DS_Store

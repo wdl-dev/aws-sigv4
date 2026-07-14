@@ -12,6 +12,7 @@ import {
 import { rejectNonPrintableAscii } from "./validation.js";
 
 export interface CanonicalHeaderOptions {
+  service: string;
   signAllHeaders?: boolean | undefined;
   unsignableHeaders?: readonly string[] | undefined;
   overwrittenHeaderNames?: readonly string[] | undefined;
@@ -41,6 +42,7 @@ export function canonicalHeaderBlock(
 }
 
 export function validateSignedHeaderValues(headers: Headers, options: CanonicalHeaderOptions): void {
+  rejectMandatoryHeaderExclusions(headers, options);
   const overwrittenHeaderNames = new Set((options.overwrittenHeaderNames || []).map((value) => value.toLowerCase()));
   for (const header of signedHeaderNames(headers, options)) {
     if (header !== HOST_HEADER && !overwrittenHeaderNames.has(header)) {
@@ -58,7 +60,7 @@ function signedHeaderNames(headers: Headers, options: CanonicalHeaderOptions): s
   return [...new Set([HOST_HEADER, ...headers.keys()])]
     .filter((header) => header !== AUTHORIZATION_HEADER)
     .filter((header) => {
-      if (MANDATORY_SIGNED_HEADERS.has(header)) {
+      if (isMandatorySignedHeader(header, options.service)) {
         return true;
       }
       if (userUnsignable.has(header)) {
@@ -67,6 +69,25 @@ function signedHeaderNames(headers: Headers, options: CanonicalHeaderOptions): s
       return options.signAllHeaders || !DEFAULT_UNSIGNABLE_HEADERS.has(header);
     })
     .sort();
+}
+
+function rejectMandatoryHeaderExclusions(headers: Headers, options: CanonicalHeaderOptions): void {
+  for (const value of options.unsignableHeaders || []) {
+    const header = value.toLowerCase();
+    const isPresentDynamicHeader =
+      headers.has(header) && (header.startsWith("x-amz-") || (options.service === "s3" && header === "content-md5"));
+    if (MANDATORY_SIGNED_HEADERS.has(header) || isPresentDynamicHeader) {
+      throw new TypeError(`unsignableHeaders must not include mandatory signed header ${header}`);
+    }
+  }
+}
+
+function isMandatorySignedHeader(header: string, service: string): boolean {
+  return (
+    MANDATORY_SIGNED_HEADERS.has(header) ||
+    header.startsWith("x-amz-") ||
+    (service === "s3" && header === "content-md5")
+  );
 }
 
 function canonicalHeaderValue(value: string, name: string): string {

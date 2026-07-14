@@ -17,78 +17,373 @@ import {
   s3Client,
 } from "./helpers.js";
 
-test("SigV4Client.fetch binds the default global fetch", async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    globalThis.fetch = function fetchWithGlobalThisCheck() {
-      assert.equal(this, globalThis);
-      return Promise.resolve(new Response("ok"));
-    };
-    const client = lambdaClient({
-      retries: 0,
-    });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 200);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("SigV4Client.fetch binds custom global fetch functions", async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    globalThis.fetch = function fetchWithGlobalThisCheck() {
-      assert.equal(this, globalThis);
-      return Promise.resolve(new Response("ok"));
-    };
-    const client = lambdaClient({
-      fetch: globalThis.fetch,
-    });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 200);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("SigV4Client.fetch does not bind unrelated custom fetch functions", async () => {
-  let observedThis;
-  const client = lambdaClient({
-    fetch: function customFetch() {
-      observedThis = this;
-      return Promise.resolve(new Response("ok"));
-    },
-  });
-  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-    signing: { signingDate: FIXED_AMZ_DATE },
-  });
-  assert.equal(response.status, 200);
-  assert.equal(observedThis, undefined);
-});
-
-test("SigV4Client.fetch signs each retry attempt", async () => {
+test("SigV4Client.fetch signs each retry attempt with the current time", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-06-16T01:02:03Z") });
   const seen = [];
   const client = lambdaClient({
     retries: 1,
     initialRetryDelayMs: 0,
     fetch: async (request) => {
-      seen.push(request.headers.get("authorization"));
+      seen.push({
+        authorization: request.headers.get("authorization"),
+        amzDate: request.headers.get("x-amz-date"),
+      });
+      t.mock.timers.setTime(new Date("2026-06-16T01:02:04Z").getTime());
       return new Response("ok", { status: seen.length === 1 ? 500 : 200 });
     },
   });
   const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
     method: "PUT",
     body: "{}",
-    signing: { signingDate: FIXED_AMZ_DATE },
   });
   assert.equal(response.status, 200);
   assert.equal(seen.length, 2);
-  assert.equal(typeof seen[0], "string");
-  assert.equal(typeof seen[1], "string");
+  assert.deepEqual(
+    seen.map(({ amzDate }) => amzDate),
+    ["20260616T010203Z", "20260616T010204Z"]
+  );
+  assert.notEqual(seen[0].authorization, seen[1].authorization);
+});
+
+test("SigV4Client.fetch snapshots URL objects across asynchronous work and retries", async () => {
+  const originalUrl = `${LAMBDA_ENDPOINT}/2025-09-09/original`;
+  const url = new URL(originalUrl);
+  const seen = [];
+  const client = lambdaClient({
+    sessionToken: SESSION_TOKEN,
+    retries: 1,
+    initialRetryDelayMs: 0,
+    fetch: async (request) => {
+      seen.push({
+        url: request.url,
+        authorization: request.headers.get("authorization"),
+        sessionToken: request.headers.get("x-amz-security-token"),
+      });
+      url.href = `${LAMBDA_ENDPOINT}/2025-09-09/changed-between-attempts`;
+      return new Response("ok", { status: seen.length === 1 ? 500 : 200 });
+    },
+  });
+  const pending = client.fetch(url, {
+    method: "PUT",
+    body: "{}",
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  url.href = "https://second.example/changed-after-call";
+  const response = await pending;
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    seen.map(({ url: value }) => value),
+    [originalUrl, originalUrl]
+  );
+  assert.ok(seen.every(({ authorization }) => authorization?.startsWith("AWS4-HMAC-SHA256 ")));
+  assert.ok(seen.every(({ sessionToken }) => sessionToken === SESSION_TOKEN));
+});
+
+test("SigV4Client.fetch snapshots Request headers before asynchronous signing", async () => {
+  let fetched;
+  const client = lambdaClient({
+    fetch: async (request) => {
+      fetched = request;
+      return new Response("ok");
+    },
+  });
+  const input = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    method: "PUT",
+    headers: { "x-amz-meta-original": "yes" },
+  });
+  const pending = client.fetch(input, { signing: { signingDate: FIXED_AMZ_DATE } });
+  input.headers.set("x-amz-meta-late", "must-not-leak");
+  const response = await pending;
+  assert.equal(response.status, 200);
+  assert.equal(fetched.headers.get("x-amz-meta-original"), "yes");
+  assert.equal(fetched.headers.get("x-amz-meta-late"), null);
+  assert.match(fetched.headers.get("authorization") || "", /x-amz-meta-original/);
+  assert.doesNotMatch(fetched.headers.get("authorization") || "", /x-amz-meta-late/);
+});
+
+test('SigV4Client.fetch rejects transports that follow redirect: "manual"', async () => {
+  const client = lambdaClient({
+    fetch: async () => {
+      const response = new Response("followed");
+      Object.defineProperty(response, "redirected", { value: true });
+      return response;
+    },
+  });
+  await assert.rejects(
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        redirect: "manual",
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /custom transport followed a redirect/
+  );
+});
+
+test("SigV4Client.fetch uses portable manual transport for redirect policies", async () => {
+  const redirects = [];
+  const client = lambdaClient({
+    fetch: async (request) => {
+      redirects.push(request.redirect);
+      return new Response("ok");
+    },
+  });
+  await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    redirect: "manual",
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    redirect: "error",
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  const request = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`);
+  await client.fetch(request, { signing: { signingDate: FIXED_AMZ_DATE } });
+  const manualRequest = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, { redirect: "manual" });
+  await client.fetch(manualRequest, { signing: { signingDate: FIXED_AMZ_DATE } });
+  assert.deepEqual(redirects, ["manual", "manual", "manual", "manual", "manual"]);
+});
+
+test("SigV4Client.fetch rejects redirect responses by default and returns them in manual mode", async () => {
+  const client = lambdaClient({
+    fetch: async () => new Response("redirect", { status: 302, headers: { location: "/next" } }),
+  });
+  await assert.rejects(
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /received a redirect response/
+  );
+  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    redirect: "manual",
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get("location"), "/next");
+});
+
+test("SigV4Client.fetch preserves aborts that settle with response cancellation", async () => {
+  const cases = [
+    {
+      name: "followed manual redirect",
+      init: { redirect: "manual" },
+      response() {
+        const response = new Response("followed");
+        Object.defineProperty(response, "redirected", { value: true });
+        return response;
+      },
+    },
+    {
+      name: "redirect response",
+      init: {},
+      response() {
+        return new Response("redirect", { status: 302, headers: { location: "/next" } });
+      },
+    },
+  ];
+  for (const testCase of cases) {
+    let cancelStartedResolve;
+    const cancelStarted = new Promise((resolve) => {
+      cancelStartedResolve = resolve;
+    });
+    let finishCancellation;
+    const cancellation = new Promise((resolve) => {
+      finishCancellation = resolve;
+    });
+    const controller = new AbortController();
+    const reason = { code: "stop-response-cancellation", case: testCase.name };
+    const client = lambdaClient({
+      fetch: async () => {
+        const response = testCase.response();
+        Object.defineProperty(response.body, "cancel", {
+          value: () => {
+            cancelStartedResolve();
+            return cancellation;
+          },
+        });
+        return response;
+      },
+    });
+    const pending = client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      ...testCase.init,
+      signal: controller.signal,
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    await cancelStarted;
+    finishCancellation();
+    queueMicrotask(() => queueMicrotask(() => queueMicrotask(() => controller.abort(reason))));
+    let caught;
+    try {
+      await pending;
+    } catch (err) {
+      caught = err;
+    }
+    assert.equal(caught, reason, testCase.name);
+  }
+});
+
+test("SigV4Client.fetch works when the runtime rejects Request redirect error", async () => {
+  const OriginalRequest = globalThis.Request;
+  try {
+    globalThis.Request = class WorkerdRequest extends OriginalRequest {
+      constructor(input, init) {
+        if (init?.redirect === "error") {
+          throw new TypeError('Invalid redirect value; "error" is unsupported');
+        }
+        super(input, init);
+      }
+    };
+    let observedRedirect;
+    const client = lambdaClient({
+      fetch: async (request) => {
+        observedRedirect = request.redirect;
+        return new Response("ok");
+      },
+    });
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(observedRedirect, "manual");
+  } finally {
+    globalThis.Request = OriginalRequest;
+  }
+});
+
+test("SigV4Client.fetch rejects redirect follow before consuming request bodies", async () => {
+  await assertFetchRejectsBeforeBody(
+    {},
+    (body) => ({
+      init: {
+        method: "PUT",
+        redirect: "follow",
+        body,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      },
+    }),
+    /does not allow redirect: "follow"/
+  );
+});
+
+test("SigV4Client.fetch rejects invalid redirect values before consuming request bodies", async () => {
+  for (const redirect of [null, "bogus"]) {
+    await assertFetchRejectsBeforeBody(
+      {},
+      (body) => ({
+        init: {
+          method: "PUT",
+          redirect,
+          body,
+          signing: { signingDate: FIXED_AMZ_DATE },
+        },
+      }),
+      /redirect must be "error" or "manual"/
+    );
+  }
+});
+
+test("SigV4Client rejects no-cors mode before consuming request bodies", async () => {
+  await assertFetchRejectsBeforeBody(
+    {},
+    (body) => ({
+      init: {
+        method: "POST",
+        mode: "no-cors",
+        body,
+        signing: { signingDate: FIXED_AMZ_DATE },
+      },
+    }),
+    /cannot sign requests with mode "no-cors"/
+  );
+  const client = lambdaClient();
+  await assert.rejects(
+    () => client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, { mode: "no-cors" }),
+    /cannot sign requests with mode "no-cors"/
+  );
+});
+
+test("SigV4Client rejects partially consumed Request bodies", async () => {
+  for (const operation of ["sign", "fetch"]) {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("first"));
+        controller.enqueue(new TextEncoder().encode("second"));
+        controller.close();
+      },
+    });
+    const request = new Request(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      method: "POST",
+      body,
+      duplex: "half",
+    });
+    const reader = request.body.getReader();
+    await reader.read();
+    reader.releaseLock();
+    let fetchCalls = 0;
+    const client = lambdaClient({
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("unreachable");
+      },
+    });
+    await assert.rejects(
+      () => client[operation](request, { signing: { signingDate: FIXED_AMZ_DATE } }),
+      /Request body has already been used/
+    );
+    assert.equal(fetchCalls, 0, operation);
+  }
+});
+
+test("Request body null overrides inherit the input body", async () => {
+  const url = `${LAMBDA_ENDPOINT}/2025-09-09/microvms`;
+  const signed = await lambdaClient().sign(new Request(url, { method: "POST", body: "signed-body" }), {
+    body: null,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(await signed.text(), "signed-body");
+
+  let fetchedBody;
+  const client = lambdaClient({
+    fetch: async (request) => {
+      fetchedBody = await request.text();
+      return new Response("ok");
+    },
+  });
+  await client.fetch(new Request(url, { method: "POST", body: "fetched-body" }), {
+    body: null,
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(fetchedBody, "fetched-body");
+});
+
+test("SigV4Client detects signed headers removed by runtime Request guards", async () => {
+  const OriginalRequest = globalThis.Request;
+  try {
+    for (const [removedHeader, message] of [
+      ["authorization", /runtime removed or rewrote the authorization header/],
+      ["x-amz-meta-color", /runtime removed or rewrote the signed x-amz-meta-color header/],
+    ]) {
+      globalThis.Request = class GuardedRequest extends OriginalRequest {
+        constructor(input, init) {
+          super(input, init);
+          this.headers.delete(removedHeader);
+        }
+      };
+      const client = lambdaClient();
+      await assert.rejects(
+        () =>
+          client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+            headers: { "x-amz-meta-color": "blue" },
+            signing: { signingDate: FIXED_AMZ_DATE },
+          }),
+        message
+      );
+    }
+  } finally {
+    globalThis.Request = OriginalRequest;
+  }
 });
 
 test("SigV4Client.fetch rejects non-printable signed header values before buffering retry bodies", async () => {

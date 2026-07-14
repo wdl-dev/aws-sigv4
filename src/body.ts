@@ -1,19 +1,60 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, textEncoder } from "./constants.js";
+import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, UNSIGNED_PAYLOAD, textEncoder } from "./constants.js";
 import { sha256Hex } from "./crypto.js";
 
 export interface PreparedBody {
   body: BodyInit | null | undefined;
-  bytes: Uint8Array;
+  payloadHash: string;
 }
 
-export async function prepareBody(
+interface MaterializedBody {
+  body: BodyInit | null | undefined;
+  bytes?: Uint8Array | undefined;
+}
+
+export interface PrepareBodyOptions {
+  service: string;
+  unsignedPayload: boolean;
+  replay: boolean;
+  signal?: AbortSignal | undefined;
+}
+
+export async function prepareSigningBody(
   body: BodyInit | null | undefined,
   headers: Headers,
-  materialize: boolean
+  options: PrepareBodyOptions
 ): Promise<PreparedBody> {
+  if (options.unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER)) {
+    headers.set(AMZ_CONTENT_SHA256_HEADER, UNSIGNED_PAYLOAD);
+  }
+  const hasBody = body !== null && body !== undefined;
+  const computePayloadHash = !headers.has(AMZ_CONTENT_SHA256_HEADER);
+  const materialize = (options.replay && shouldMaterializeBodyForReplay(body)) || (computePayloadHash && hasBody);
+  const prepared = await prepareBody(body, headers, materialize, options.signal);
+  let payloadHash = headers.get(AMZ_CONTENT_SHA256_HEADER);
+  if (payloadHash === null) {
+    if (prepared.bytes === undefined) {
+      throw new Error("body bytes must be materialized before payload hashing");
+    }
+    payloadHash = await sha256Hex(prepared.bytes);
+    options.signal?.throwIfAborted();
+    if (hasBody || options.service === "s3") {
+      headers.set(AMZ_CONTENT_SHA256_HEADER, payloadHash);
+    }
+  }
+  return { body: prepared.body, payloadHash };
+}
+
+async function prepareBody(
+  body: BodyInit | null | undefined,
+  headers: Headers,
+  materialize: boolean,
+  signal?: AbortSignal
+): Promise<MaterializedBody> {
+  signal?.throwIfAborted();
+  assertSupportedBody(body);
   if (body === null || body === undefined) {
     return { body, bytes: new Uint8Array() };
   }
@@ -24,19 +65,32 @@ export async function prepareBody(
     if (contentType) {
       headers.set(CONTENT_TYPE_HEADER, contentType);
     }
-    const bytes = new Uint8Array(await request.arrayBuffer());
+    const bytes =
+      signal && request.body
+        ? await readStreamBytes(request.body, signal)
+        : new Uint8Array(await request.arrayBuffer());
+    signal?.throwIfAborted();
     return { body: bytes, bytes };
   }
   setGeneratedContentType(body, headers);
-  if (!materialize) {
-    return { body, bytes: new Uint8Array() };
-  }
   if (body instanceof ReadableStream) {
-    const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+    assertReadableStreamUsable(body);
+    if (!materialize) {
+      return { body };
+    }
+    const bytes = await readStreamBytes(body, signal);
     return { body: bytes, bytes };
   }
-  const bytes = await bodyBytes(body);
+  if (!materialize && (typeof body === "string" || body instanceof Blob)) {
+    return { body };
+  }
+  const bytes = await bodyBytes(body, signal);
+  signal?.throwIfAborted();
   return { body: stableMaterializedBody(body, bytes), bytes };
+}
+
+function shouldMaterializeBodyForReplay(body: BodyInit | null | undefined): boolean {
+  return body !== undefined && body !== null && typeof body !== "string" && !(body instanceof Blob);
 }
 
 function rejectManualFormDataContentType(headers: Headers): void {
@@ -53,57 +107,124 @@ function setGeneratedContentType(body: BodyInit, headers: Headers): void {
     headers.set(CONTENT_TYPE_HEADER, "text/plain;charset=UTF-8");
   } else if (body instanceof URLSearchParams) {
     headers.set(CONTENT_TYPE_HEADER, "application/x-www-form-urlencoded;charset=UTF-8");
-  } else if (body instanceof Blob && body.type) {
-    headers.set(CONTENT_TYPE_HEADER, body.type);
+  } else if (body instanceof Blob) {
+    if (body.type) {
+      headers.set(CONTENT_TYPE_HEADER, body.type);
+    }
   }
 }
 
-async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
+async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Array> {
   if (typeof body === "string") {
     return textEncoder.encode(body);
   }
   if (body instanceof Uint8Array) {
-    return body;
-  }
-  if (body instanceof ArrayBuffer) {
     return new Uint8Array(body);
   }
+  if (body instanceof ArrayBuffer) {
+    return new Uint8Array(body).slice();
+  }
   if (ArrayBuffer.isView(body)) {
-    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
   }
   if (body instanceof URLSearchParams) {
     return textEncoder.encode(body.toString());
   }
   if (body instanceof Blob) {
+    if (signal) {
+      return readStreamBytes(body.stream(), signal);
+    }
     return new Uint8Array(await body.arrayBuffer());
   }
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
 }
 
-export function shouldHashPayload(
-  body: BodyInit | null | undefined,
-  headers: Headers,
-  unsignedPayload: boolean
-): boolean {
-  return body !== undefined && body !== null && !unsignedPayload && !headers.has(AMZ_CONTENT_SHA256_HEADER);
+function assertReadableStreamUsable(body: ReadableStream): void {
+  try {
+    void new Response(body);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new TypeError("ReadableStream body must not be disturbed or locked", { cause: error });
+    }
+    throw error;
+  }
 }
 
-export async function prepareHashedBody(
-  body: BodyInit | null | undefined,
-  headers: Headers,
-  unsignedPayload: boolean,
-  materialize = false
-): Promise<PreparedBody> {
-  const hashPayload = shouldHashPayload(body, headers, unsignedPayload);
-  const preparedBody = await prepareBody(body, headers, materialize || hashPayload);
-  if (hashPayload) {
-    headers.set(AMZ_CONTENT_SHA256_HEADER, await sha256Hex(preparedBody.bytes));
+async function readStreamBytes(
+  stream: ReadableStream<unknown>,
+  signal?: AbortSignal
+): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let byteLength = 0;
+  const onAbort = () => {
+    if (signal) {
+      void reader.cancel(signal.reason).catch(() => undefined);
+    }
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      const result = await reader.read();
+      signal?.throwIfAborted();
+      if (result.done) {
+        break;
+      }
+      const value = result.value;
+      if (!(value instanceof Uint8Array)) {
+        throw new TypeError("ReadableStream body must yield Uint8Array chunks");
+      }
+      const chunk = new Uint8Array(value);
+      chunks.push(chunk);
+      byteLength += chunk.byteLength;
+    }
+  } catch (err) {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
+    void reader.cancel(err).catch(() => undefined);
+    throw err;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    reader.releaseLock();
   }
-  return preparedBody;
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function";
+}
+
+function assertSupportedBody(body: BodyInit | null | undefined): void {
+  if (body === null || body === undefined) {
+    return;
+  }
+  if (
+    typeof body === "string" ||
+    body instanceof Blob ||
+    body instanceof FormData ||
+    body instanceof ReadableStream ||
+    body instanceof URLSearchParams ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body)
+  ) {
+    return;
+  }
+  if (isAsyncIterable(body)) {
+    throw new TypeError("async iterable bodies are not supported; use a ReadableStream");
+  }
+  throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
 }
 
 function stableMaterializedBody(body: BodyInit, bytes: Uint8Array): BodyInit {
-  if (typeof body === "string" || body instanceof Uint8Array) {
+  if (typeof body === "string") {
     return body;
   }
   if (bytes.buffer instanceof ArrayBuffer) {

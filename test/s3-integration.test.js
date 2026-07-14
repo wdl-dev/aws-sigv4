@@ -8,7 +8,6 @@ import { test } from "node:test";
 import { SigV4Client } from "../dist/index.js";
 
 const integration = process.env.AWS_SIGV4_S3_INTEGRATION;
-const enabled = integration === "1" || integration === "s3mock" || integration === "aws";
 const endpoint = (process.env.AWS_SIGV4_S3_ENDPOINT || "http://127.0.0.1:19500").replace(/\/+$/u, "");
 const accessKeyId = process.env.AWS_SIGV4_S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || "test";
 const secretAccessKey = process.env.AWS_SIGV4_S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || "test";
@@ -19,9 +18,14 @@ const requestTimeoutMs = parseTimeoutMs(process.env.AWS_SIGV4_S3_REQUEST_TIMEOUT
 const existingBucket = process.env.AWS_SIGV4_S3_BUCKET || undefined;
 
 test(
-  "S3-compatible integration signs bucket, object, and reserved-key operations",
-  { skip: enabled ? false : "set AWS_SIGV4_S3_INTEGRATION=1, s3mock, or aws", timeout: 240_000 },
+  "S3-compatible integration requires a mode and signs bucket, object, and reserved-key operations",
+  { timeout: 240_000 },
   async () => {
+    if (integration !== "1" && integration !== "s3mock" && integration !== "aws") {
+      assert.fail(
+        "AWS_SIGV4_S3_INTEGRATION must be set to 1, s3mock, or aws; refusing to report a skipped integration run as success"
+      );
+    }
     if (integration === "aws" && existingBucket === undefined) {
       assert.fail("AWS_SIGV4_S3_BUCKET is required when AWS_SIGV4_S3_INTEGRATION=aws");
     }

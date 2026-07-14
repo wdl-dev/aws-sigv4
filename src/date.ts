@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-import { ISO_DATE_RE, SIGNING_DATE_ERROR } from "./constants.js";
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/u;
+const SIGNING_DATE_ERROR = "signingDate must be a valid Date, ISO-8601 string, or YYYYMMDDTHHMMSSZ string";
 
 export function optionalAmzDate(value: unknown): string | undefined {
   if (value === undefined || value === null) {
@@ -24,25 +25,14 @@ export function formatAmzDate(value: string | Date): string {
     throw new TypeError(SIGNING_DATE_ERROR);
   }
   const date = typeof value === "string" ? new Date(value) : value;
-  if (!(date instanceof Date)) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
     throw new TypeError(SIGNING_DATE_ERROR);
   }
-  if (Number.isNaN(dateTimeValue(date))) {
-    throw new TypeError(SIGNING_DATE_ERROR);
-  }
-  const amzDate = Date.prototype.toISOString.call(date).replace(/[:-]|\.\d{3}/g, "");
+  const amzDate = date.toISOString().replace(/[:-]|\.\d{3}/g, "");
   if (!/^\d{8}T\d{6}Z$/u.test(amzDate) || !isValidCompactAmzDate(amzDate)) {
     throw new TypeError(SIGNING_DATE_ERROR);
   }
   return amzDate;
-}
-
-function dateTimeValue(date: Date): number {
-  try {
-    return Date.prototype.getTime.call(date);
-  } catch {
-    throw new TypeError(SIGNING_DATE_ERROR);
-  }
 }
 
 function isValidIsoDate(value: string): boolean {
