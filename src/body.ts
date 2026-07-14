@@ -35,7 +35,10 @@ export async function prepareSigningBody(
   const prepared = await prepareBody(body, headers, materialize, options.signal);
   let payloadHash = headers.get(AMZ_CONTENT_SHA256_HEADER);
   if (payloadHash === null) {
-    payloadHash = await sha256Hex(prepared.bytes ?? new Uint8Array());
+    if (prepared.bytes === undefined) {
+      throw new Error("body bytes must be materialized before payload hashing");
+    }
+    payloadHash = await sha256Hex(prepared.bytes);
     options.signal?.throwIfAborted();
     if (hasBody || options.service === "s3") {
       headers.set(AMZ_CONTENT_SHA256_HEADER, payloadHash);
@@ -70,13 +73,16 @@ async function prepareBody(
     return { body: bytes, bytes };
   }
   setGeneratedContentType(body, headers);
-  if (!materialize && (typeof body === "string" || body instanceof Blob || body instanceof ReadableStream)) {
-    return { body };
-  }
   if (body instanceof ReadableStream) {
     assertReadableStreamUsable(body);
+    if (!materialize) {
+      return { body };
+    }
     const bytes = await readStreamBytes(body, signal);
     return { body: bytes, bytes };
+  }
+  if (!materialize && (typeof body === "string" || body instanceof Blob)) {
+    return { body };
   }
   const bytes = await bodyBytes(body, signal);
   signal?.throwIfAborted();

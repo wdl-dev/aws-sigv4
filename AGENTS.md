@@ -22,6 +22,7 @@ npm run lint
 npm run format:check
 npm run test:coverage
 npm run test:workerd
+npm run check:pack
 npm pack --dry-run
 git diff --cached --check
 ```
@@ -29,8 +30,9 @@ git diff --cached --check
 `npm run test:coverage` runs `tsc --project tsconfig.json` before the Node test
 suite and enforces coverage thresholds. `npm run test:workerd` runs a focused
 smoke test on the workerd version pinned in `devDependencies`. The published
-package is intentionally small; `npm pack --dry-run` should keep the tarball
-limited to `LICENSE`, `NOTICE`, `README.md`, `package.json`, and `dist/`.
+package is intentionally small; `npm run check:pack` validates the packed
+allowlist and consumer behavior, while `npm pack --dry-run` should keep the
+tarball limited to `LICENSE`, `NOTICE`, `README.md`, `package.json`, and `dist/`.
 
 Release tags are handled by `.github/workflows/release.yml`. npmjs publishing
 uses trusted publishing with GitHub Actions OIDC, and GitHub Packages publishing

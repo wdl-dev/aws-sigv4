@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Sean Consulting OÜ
 // SPDX-License-Identifier: Apache-2.0
 
-export function isAbortError(err: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || (err instanceof DOMException && err.name === "AbortError");
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
 }
 
 export function sleep(ms: number, signal: AbortSignal): Promise<void> {

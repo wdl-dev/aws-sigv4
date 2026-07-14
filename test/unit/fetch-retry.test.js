@@ -132,6 +132,29 @@ test("SigV4Client.fetch does not retry aborted requests", async () => {
   assert.equal(calls, 1);
 });
 
+test("SigV4Client.fetch does not retry transport AbortError rejections", async () => {
+  let calls = 0;
+  const transportError = new DOMException("transport timeout", "AbortError");
+  const client = lambdaClient({
+    retries: 3,
+    initialRetryDelayMs: 0,
+    fetch: async (request) => {
+      calls += 1;
+      assert.equal(request.signal.aborted, false);
+      throw transportError;
+    },
+  });
+  await assert.rejects(
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        method: "PUT",
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    (error) => error === transportError
+  );
+  assert.equal(calls, 1);
+});
+
 test("SigV4Client.fetch aborts while waiting to retry", async () => {
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;

@@ -26,12 +26,15 @@ export async function signatureHex(options: SignatureOptions): Promise<string> {
     const secretAccessKeyHash = options.secretAccessKeyHash ?? (await sha256Hex(options.secretAccessKey));
     const cacheKey = ["sigv4", secretAccessKeyHash, options.date, options.region, options.service].join(",");
     const cachedSigningKey = options.cache.get(cacheKey);
-    signingKey =
-      cachedSigningKey === undefined
-        ? await deriveCachedSigningKey(options, options.cache, cacheKey)
-        : cachedSigningKey;
+    signingKey = isSigningKeyCacheMiss(cachedSigningKey)
+      ? await deriveCachedSigningKey(options, options.cache, cacheKey)
+      : cachedSigningKey;
   }
   return hex(await hmac(signingKey, options.stringToSign));
+}
+
+function isSigningKeyCacheMiss(value: unknown): value is null | undefined {
+  return value === undefined || value === null;
 }
 
 async function deriveCachedSigningKey(

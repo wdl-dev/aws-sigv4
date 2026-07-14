@@ -86,39 +86,44 @@ test("SigV4Client.sign supports ReadableStream bodies", async () => {
   assert.match(signed.headers.get("authorization") || "", /SignedHeaders=host;x-amz-content-sha256;x-amz-date/);
 });
 
-test("payload hashing rejects disturbed ReadableStream bodies without consuming remaining bytes", async () => {
-  for (const consumeAll of [false, true]) {
-    const body = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode("part1"));
-        controller.enqueue(new TextEncoder().encode("part2"));
-        controller.close();
-      },
-    });
-    const reader = body.getReader();
-    assert.equal(new TextDecoder().decode((await reader.read()).value), "part1");
-    if (consumeAll) {
-      assert.equal(new TextDecoder().decode((await reader.read()).value), "part2");
-    }
-    reader.releaseLock();
+for (const [name, sign, method, url] of [
+  ["payload hashing", lambdaRequest, "POST", `${LAMBDA_ENDPOINT}/2025-09-09/microvms`],
+  ["S3 unsigned payload", s3Request, "PUT", `${S3_ENDPOINT}/example-bucket/disturbed.txt`],
+]) {
+  test(`${name} rejects disturbed ReadableStream bodies without consuming remaining bytes`, async () => {
+    for (const consumeAll of [false, true]) {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("part1"));
+          controller.enqueue(new TextEncoder().encode("part2"));
+          controller.close();
+        },
+      });
+      const reader = body.getReader();
+      assert.equal(new TextDecoder().decode((await reader.read()).value), "part1");
+      if (consumeAll) {
+        assert.equal(new TextDecoder().decode((await reader.read()).value), "part2");
+      }
+      reader.releaseLock();
 
-    await assert.rejects(
-      () =>
-        lambdaRequest({
-          method: "POST",
-          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-          body,
-        }),
-      /ReadableStream body must not be disturbed or locked/
-    );
-    assert.equal(body.locked, false);
-    if (!consumeAll) {
-      const remainingReader = body.getReader();
-      assert.equal(new TextDecoder().decode((await remainingReader.read()).value), "part2");
-      remainingReader.releaseLock();
+      await assert.rejects(
+        () =>
+          sign({
+            method,
+            url,
+            body,
+          }),
+        /ReadableStream body must not be disturbed or locked/
+      );
+      assert.equal(body.locked, false);
+      if (!consumeAll) {
+        const remainingReader = body.getReader();
+        assert.equal(new TextDecoder().decode((await remainingReader.read()).value), "part2");
+        remainingReader.releaseLock();
+      }
     }
-  }
-});
+  });
+}
 
 test("payload hashing cancels streams that yield invalid chunks", async () => {
   let cancelReason;

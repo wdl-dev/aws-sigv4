@@ -38,7 +38,7 @@ export interface SignAwsRequestOptions {
 }
 
 export interface SigningKeyCache {
-  get(key: string): ArrayBuffer | undefined;
+  get(key: string): ArrayBuffer | null | undefined;
   set(key: string, value: ArrayBuffer): unknown;
 }
 

@@ -48,7 +48,7 @@ export function resolveClientFetchRequest(
   init?: SigV4RequestInit
 ): ResolvedClientFetchRequest {
   const { request, inheritedRedirect, explicitRedirect } = resolveClientRequest(input, init);
-  const redirectPolicy = safeFetchRedirect(inheritedRedirect, explicitRedirect);
+  const redirectPolicy = resolveFetchRedirectPolicy(inheritedRedirect, explicitRedirect);
   request.init.redirect = "manual";
   return { ...request, redirectPolicy };
 }
@@ -300,7 +300,7 @@ export function bindFetch(fetchFn: (request: Request) => Promise<Response>): (re
   return Object.is(fetchFn, globalThis.fetch) ? fetchFn.bind(globalThis) : fetchFn;
 }
 
-function safeFetchRedirect(inherited: RequestRedirect | undefined, explicit: unknown): RequestRedirect {
+function resolveFetchRedirectPolicy(inherited: RequestRedirect | undefined, explicit: unknown): RequestRedirect {
   if (explicit !== undefined) {
     if (explicit === "follow") {
       throw new TypeError('SigV4Client.fetch does not allow redirect: "follow"; redirected requests must be re-signed');

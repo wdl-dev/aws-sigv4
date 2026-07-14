@@ -52,6 +52,8 @@ SPDX-License-Identifier: Apache-2.0
 - The `unsignableHeaders` type now excludes bare strings, matching their existing
   runtime rejection. Use an array, Set, or another object iterable of header
   names.
+- `SigningKeyCache.get()` may return `null` as a cache-miss sentinel in addition
+  to the standard `undefined` value.
 - Client credentials and transport configuration now use native private fields.
   Concurrent cold-cache signing for the same credential scope shares one
   signing-key derivation.
@@ -65,17 +67,18 @@ SPDX-License-Identifier: Apache-2.0
   `Request` construction: transport uses manual mode and the client enforces the
   configured redirect policy on the response.
 - Request inputs now inherit their signal and body for `body: null` consistently
-  with the platform. Used request bodies, unsupported body objects, non-standard
-  async iterables, and Fetch-forbidden client methods are rejected before
-  transport.
+  with the platform. Used request bodies, disturbed or locked `ReadableStream`
+  bodies, unsupported body objects, non-standard async iterables, and
+  Fetch-forbidden client methods are rejected before transport.
 - Mutable binary, Blob, FormData, URLSearchParams, and stream bodies are stable
   whenever hashing or retry replay requires fixed bytes, including S3
   `UNSIGNED-PAYLOAD` retries.
 - Custom transports now fail closed if they follow a redirect or return after
   cancellation. Abort reasons are preserved through body handling, transport,
   response cleanup, and retry waits.
-- Rejected malformed UTF-16 secret access keys before UTF-8 encoding can alias
-  distinct JavaScript strings; well-formed Unicode secrets remain supported.
+- Malformed UTF-16 secret access keys are now rejected because UTF-8 replacement
+  could otherwise alias distinct JavaScript strings; well-formed Unicode secrets
+  remain supported.
 
 ### Documentation
 

@@ -39,35 +39,40 @@ async function assertS3RequestSignature() {
 }
 
 async function assertDisturbedStreamRejected() {
-  const body = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode("part1"));
-      controller.enqueue(new TextEncoder().encode("part2"));
-      controller.close();
-    },
-  });
-  const reader = body.getReader();
-  await reader.read();
-  reader.releaseLock();
-  let caught;
-  try {
-    await signAwsRequest({
-      accessKeyId: ACCESS_KEY_ID,
-      secretAccessKey: SECRET_ACCESS_KEY,
-      service: "lambda",
-      region: "ap-northeast-1",
-      method: "POST",
-      url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
-      body,
-      signingDate: FIXED_AMZ_DATE,
+  for (const [service, region, method, url] of [
+    ["lambda", "ap-northeast-1", "POST", "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms"],
+    ["s3", "us-east-1", "PUT", "https://s3.us-east-1.amazonaws.com/example-bucket/disturbed.txt"],
+  ]) {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("part1"));
+        controller.enqueue(new TextEncoder().encode("part2"));
+        controller.close();
+      },
     });
-  } catch (error) {
-    caught = error;
+    const reader = body.getReader();
+    await reader.read();
+    reader.releaseLock();
+    let caught;
+    try {
+      await signAwsRequest({
+        accessKeyId: ACCESS_KEY_ID,
+        secretAccessKey: SECRET_ACCESS_KEY,
+        service,
+        region,
+        method,
+        url,
+        body,
+        signingDate: FIXED_AMZ_DATE,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    if (!(caught instanceof TypeError) || caught.message !== "ReadableStream body must not be disturbed or locked") {
+      throw new Error(`${service} disturbed stream error: received ${String(caught)}`);
+    }
+    assertEqual(body.locked, false, `${service} disturbed stream lock state`);
   }
-  if (!(caught instanceof TypeError) || caught.message !== "ReadableStream body must not be disturbed or locked") {
-    throw new Error(`disturbed stream error: received ${String(caught)}`);
-  }
-  assertEqual(body.locked, false, "disturbed stream lock state");
 }
 
 async function assertGoldenSignature() {

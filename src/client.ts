@@ -46,7 +46,7 @@ interface ResolvedSigningOptions {
 
 interface PreparedFetchRequest {
   request: ResolvedClientFetchRequest;
-  body: PreparedBody;
+  preparedBody: PreparedBody;
 }
 
 const MAX_RETRY_DELAY_MS = 2_147_483_647;
@@ -156,14 +156,14 @@ export class SigV4Client {
     );
     const fetchFn = this.#fetchFn;
     for (let attempt = 0; attempt <= this.#retries; attempt += 1) {
-      const signedRequest = await this.#signResolvedRequest(prepared.request, signing, prepared.body);
+      const signedRequest = await this.#signResolvedRequest(prepared.request, signing, prepared.preparedBody);
       const attemptSignal = validateRequestBeforeTransport(signedRequest);
       let response;
       try {
         response = await fetchFn(signedRequest);
       } catch (err) {
         attemptSignal.throwIfAborted();
-        if (attempt === this.#retries || !retryableMethod || isAbortError(err, attemptSignal)) {
+        if (attempt === this.#retries || !retryableMethod || isAbortError(err)) {
           throw err;
         }
         await sleep(Math.random() * this.#retryDelayMs(attempt), attemptSignal);
@@ -241,7 +241,7 @@ async function prepareFetchRequest(
     unsignableHeaders: signing.unsignableHeaders,
     overwrittenHeaderNames: signerOverwrittenHeaderNames(hasSessionToken),
   });
-  const body = await prepareSigningBody(request.body, headers, {
+  const preparedBody = await prepareSigningBody(request.body, headers, {
     service: signing.service,
     unsignedPayload: signing.unsignedPayload,
     replay,
@@ -251,18 +251,18 @@ async function prepareFetchRequest(
     ...request.init,
     headers,
   };
-  if (body.body === undefined) {
+  if (preparedBody.body === undefined) {
     delete out.body;
   } else {
-    out.body = body.body;
+    out.body = preparedBody.body;
   }
   return {
     request: {
       ...request,
       init: out,
       headers,
-      body: body.body,
+      body: preparedBody.body,
     },
-    body,
+    preparedBody,
   };
 }
