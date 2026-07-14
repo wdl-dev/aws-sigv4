@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 3.0.0
+
 ### Breaking changes
 
 - Path signing now follows AWS service defaults: S3 paths remain single-encoded,
