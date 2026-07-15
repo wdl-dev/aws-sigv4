@@ -30,29 +30,15 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function cancelResponseBody(response: Response, signal: AbortSignal): Promise<void> {
-  let cancellation: Promise<void> | undefined;
+export function cancelResponseBody(response: Response): void {
   try {
-    cancellation = response.body?.cancel();
+    const cancellation = response.body?.cancel();
+    if (cancellation) {
+      // Start response cleanup without making retry or error progress depend
+      // on an underlying source's potentially unbounded cancellation work.
+      void cancellation.catch(() => undefined);
+    }
   } catch {
-    // Best-effort connection release before retrying.
-    return;
+    // Response cleanup is best-effort.
   }
-  if (!cancellation) {
-    return;
-  }
-  const settledCancellation = cancellation.catch(() => undefined);
-  signal.throwIfAborted();
-  const { promise: aborted, reject } = Promise.withResolvers<never>();
-  const onAbort = () => {
-    // Preserve AbortSignal.reason exactly; Web APIs allow non-Error reasons.
-    reject(signal.reason);
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
-  try {
-    await Promise.race([settledCancellation, aborted]);
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-  }
-  signal.throwIfAborted();
 }

@@ -225,8 +225,9 @@ CORS permission; workerd does not expose browser-style no-cors semantics.
 A custom transport receives one signed `Request` and returns a
 `Promise<Response>`. It must honor the request signal, stop I/O on abort, and
 preserve manual redirect mode. The effective signal covers body preparation,
-transport, response cleanup, and retry waits, with no implicit deadline. Use
-`AbortSignal.timeout()` when needed.
+transport, and retry waits, with no implicit deadline. Discarded response bodies
+are cancelled best-effort, but cleanup completion never delays a retry or error.
+Use `AbortSignal.timeout()` when needed.
 
 Only standard Request state is copied. Runtime-specific fetch options, such as
 undici's `dispatcher`, are not represented by the Web `Request` API and cannot be

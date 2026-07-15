@@ -7,6 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Fixed
+
+- Discarded response bodies no longer wait for cancellation to finish; cleanup
+  remains best-effort even when an underlying stream never settles its
+  cancellation promise, so retries and errors can still make progress.
+
 ## 3.0.0
 
 ### Breaking changes

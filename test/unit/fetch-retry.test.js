@@ -239,7 +239,7 @@ test("SigV4Client.fetch aborts retry delays immediately", async () => {
 });
 
 test("SigV4Client.fetch cancels retryable response bodies before aborting", async () => {
-  let cancelled = 0;
+  let cancellations = 0;
   const controller = new AbortController();
   const client = lambdaClient({
     retries: 1,
@@ -252,7 +252,7 @@ test("SigV4Client.fetch cancels retryable response bodies before aborting", asyn
             innerController.enqueue(new TextEncoder().encode("retry"));
           },
           cancel() {
-            cancelled += 1;
+            cancellations += 1;
           },
         }),
         { status: 500 }
@@ -268,7 +268,7 @@ test("SigV4Client.fetch cancels retryable response bodies before aborting", asyn
       }),
     /AbortError|aborted/
   );
-  assert.equal(cancelled, 1);
+  assert.equal(cancellations, 1);
 });
 
 test("SigV4Client.fetch signs Request input payload hashes from the Request body", async () => {
@@ -309,7 +309,7 @@ test("SigV4Client.fetch signs Request input payload hashes from the Request body
 
 test("SigV4Client.fetch cancels retryable response bodies before retrying", async () => {
   let calls = 0;
-  let cancelled = 0;
+  let cancellations = 0;
   const client = lambdaClient({
     retries: 1,
     initialRetryDelayMs: 0,
@@ -322,7 +322,7 @@ test("SigV4Client.fetch cancels retryable response bodies before retrying", asyn
               controller.enqueue(new TextEncoder().encode("retry"));
             },
             cancel() {
-              cancelled += 1;
+              cancellations += 1;
             },
           }),
           { status: 500 }
@@ -335,7 +335,80 @@ test("SigV4Client.fetch cancels retryable response bodies before retrying", asyn
     signing: { signingDate: FIXED_AMZ_DATE },
   });
   assert.equal(response.status, 200);
-  assert.equal(cancelled, 1);
+  assert.equal(cancellations, 1);
+});
+
+test(
+  "SigV4Client.fetch does not wait for stalled response cancellation before retrying",
+  { timeout: 2_000 },
+  async () => {
+    let cancellations = 0;
+    let fetchCalls = 0;
+    const client = lambdaClient({
+      retries: 1,
+      initialRetryDelayMs: 0,
+      fetch: async () => {
+        fetchCalls += 1;
+        if (fetchCalls === 2) {
+          return new Response("ok");
+        }
+        return new Response(
+          new ReadableStream({
+            cancel() {
+              cancellations += 1;
+              return new Promise(() => {});
+            },
+          }),
+          { status: 500 }
+        );
+      },
+    });
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(await response.text(), "ok");
+    assert.equal(fetchCalls, 2);
+    assert.equal(cancellations, 1);
+  }
+);
+
+test("SigV4Client.fetch ignores response cancellation failures before retrying", async () => {
+  const cases = [
+    {
+      name: "synchronous throw",
+      cancel() {
+        throw new Error("cancel failed synchronously");
+      },
+    },
+    {
+      name: "asynchronous rejection",
+      cancel() {
+        return Promise.reject(new Error("cancel failed asynchronously"));
+      },
+    },
+  ];
+  for (const testCase of cases) {
+    let calls = 0;
+    const client = lambdaClient({
+      retries: 1,
+      initialRetryDelayMs: 0,
+      fetch: async () => {
+        calls += 1;
+        if (calls === 2) {
+          return new Response("ok");
+        }
+        const response = new Response("retry", { status: 500 });
+        Object.defineProperty(response.body, "cancel", { value: testCase.cancel });
+        return response;
+      },
+    });
+    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+      signing: { signingDate: FIXED_AMZ_DATE },
+    });
+    assert.equal(await response.text(), "ok", testCase.name);
+    assert.equal(calls, 2, testCase.name);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 });
 
 test("SigV4Client.fetch reuses signed payload hashes across retries", async () => {
@@ -703,46 +776,6 @@ test("SigV4Client.fetch preserves an explicit null abort reason", async () => {
     caught = err;
   }
   assert.equal(caught, null);
-});
-
-test("SigV4Client.fetch aborts while retry response cancellation is stalled", { timeout: 2_000 }, async () => {
-  let cancelStartedResolve;
-  const cancelStarted = new Promise((resolve) => {
-    cancelStartedResolve = resolve;
-  });
-  const controller = new AbortController();
-  const reason = { code: "stop-response-cancellation" };
-  let fetchCalls = 0;
-  const client = lambdaClient({
-    retries: 1,
-    initialRetryDelayMs: 0,
-    fetch: async () => {
-      fetchCalls += 1;
-      return new Response(
-        new ReadableStream({
-          cancel() {
-            cancelStartedResolve();
-            return new Promise(() => {});
-          },
-        }),
-        { status: 500 }
-      );
-    },
-  });
-  const pending = client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-    signal: controller.signal,
-    signing: { signingDate: FIXED_AMZ_DATE },
-  });
-  await cancelStarted;
-  controller.abort(reason);
-  let caught;
-  try {
-    await pending;
-  } catch (err) {
-    caught = err;
-  }
-  assert.equal(caught, reason);
-  assert.equal(fetchCalls, 1);
 });
 
 test("SigV4Client.fetch rejects invalid HTTP methods before retry planning", async () => {

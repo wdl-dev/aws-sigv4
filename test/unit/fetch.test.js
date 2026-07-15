@@ -164,7 +164,35 @@ test("SigV4Client.fetch rejects redirect responses by default and returns them i
   assert.equal(response.headers.get("location"), "/next");
 });
 
-test("SigV4Client.fetch preserves aborts that settle with response cancellation", async () => {
+test(
+  "SigV4Client.fetch does not wait for stalled response cancellation before rejecting redirects",
+  { timeout: 2_000 },
+  async () => {
+    let cancellations = 0;
+    const client = lambdaClient({
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancellations += 1;
+              return new Promise(() => {});
+            },
+          }),
+          { status: 302, headers: { location: "/next" } }
+        ),
+    });
+    await assert.rejects(
+      () =>
+        client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+          signing: { signingDate: FIXED_AMZ_DATE },
+        }),
+      /received a redirect response/
+    );
+    assert.equal(cancellations, 1);
+  }
+);
+
+test("SigV4Client.fetch preserves aborts raised while starting response cancellation", async () => {
   const cases = [
     {
       name: "followed manual redirect",
@@ -184,14 +212,6 @@ test("SigV4Client.fetch preserves aborts that settle with response cancellation"
     },
   ];
   for (const testCase of cases) {
-    let cancelStartedResolve;
-    const cancelStarted = new Promise((resolve) => {
-      cancelStartedResolve = resolve;
-    });
-    let finishCancellation;
-    const cancellation = new Promise((resolve) => {
-      finishCancellation = resolve;
-    });
     const controller = new AbortController();
     const reason = { code: "stop-response-cancellation", case: testCase.name };
     const client = lambdaClient({
@@ -199,8 +219,8 @@ test("SigV4Client.fetch preserves aborts that settle with response cancellation"
         const response = testCase.response();
         Object.defineProperty(response.body, "cancel", {
           value: () => {
-            cancelStartedResolve();
-            return cancellation;
+            controller.abort(reason);
+            return new Promise(() => {});
           },
         });
         return response;
@@ -211,9 +231,6 @@ test("SigV4Client.fetch preserves aborts that settle with response cancellation"
       signal: controller.signal,
       signing: { signingDate: FIXED_AMZ_DATE },
     });
-    await cancelStarted;
-    finishCancellation();
-    queueMicrotask(() => queueMicrotask(() => queueMicrotask(() => controller.abort(reason))));
     let caught;
     try {
       await pending;

@@ -170,16 +170,16 @@ export class SigV4Client {
         continue;
       }
       if (attemptSignal.aborted) {
-        await cancelResponseBody(response, attemptSignal);
+        cancelResponseBody(response);
         attemptSignal.throwIfAborted();
       }
       if (prepared.request.redirectPolicy === "manual" && response.redirected) {
-        await cancelResponseBody(response, attemptSignal);
+        cancelResponseBody(response);
         attemptSignal.throwIfAborted();
         throw new TypeError('SigV4Client.fetch custom transport followed a redirect despite redirect: "manual"');
       }
       if (prepared.request.redirectPolicy === "error" && isRedirectResponse(response)) {
-        await cancelResponseBody(response, attemptSignal);
+        cancelResponseBody(response);
         attemptSignal.throwIfAborted();
         throw new TypeError("SigV4Client.fetch received a redirect response; redirect targets must be re-signed");
       }
@@ -187,7 +187,7 @@ export class SigV4Client {
       if (attempt === this.#retries || !retryableResponse) {
         return response;
       }
-      await cancelResponseBody(response, attemptSignal);
+      cancelResponseBody(response);
       attemptSignal.throwIfAborted();
       await sleep(Math.random() * this.#retryDelayMs(attempt), attemptSignal);
     }
