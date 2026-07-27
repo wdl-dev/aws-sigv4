@@ -49,17 +49,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.6.0",
-    "globals": "^17.7.0",
-    "prettier": "^3.9.4",
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
     "typescript": "6.0.3",
-    "typescript-eslint": "^8.62.1",
-    "workerd": "1.20260701.1"
+    "typescript-eslint": "^8.65.0",
+    "workerd": "1.20260727.1"
   },
   "engines": {
     "node": ">=24"
   },
   "allowScripts": {
-    "workerd@1.20260701.1": true
+    "workerd@1.20260727.1": true
   }
 }

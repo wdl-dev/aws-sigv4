@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 Small zero-dependency AWS Signature Version 4 signer for web-standard runtimes,
 with focused coverage for JSON AWS APIs and S3-compatible object storage.
 The supported baseline is Node.js 24+; other runtimes need equivalent ES2025 and
-Web API support. CI also runs a smoke test on the pinned `workerd@1.20260701.1`
+Web API support. CI also runs a smoke test on the pinned `workerd@1.20260727.1`
 release with compatibility date `2026-07-01`.
 Web API inputs must be standards-compliant objects created by the active runtime;
 cross-realm objects and arbitrary polyfills are outside the supported input
