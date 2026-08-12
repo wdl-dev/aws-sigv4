@@ -673,6 +673,28 @@ test("payload hashing rejects out-of-bounds ArrayBufferView bodies", async () =>
   }
 });
 
+test("payload hashing rejects detached ArrayBuffer bodies and views", async () => {
+  for (const createBody of [
+    (buffer) => buffer,
+    (buffer) => new Uint8Array(buffer),
+    (buffer) => new Uint16Array(buffer),
+    (buffer) => new DataView(buffer),
+  ]) {
+    const buffer = new ArrayBuffer(8);
+    const body = createBody(buffer);
+    structuredClone(buffer, { transfer: [buffer] });
+    await assert.rejects(
+      () =>
+        lambdaRequest({
+          method: "POST",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          body,
+        }),
+      TypeError
+    );
+  }
+});
+
 test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () => {
   const body = new TextEncoder().encode('{"ok":true}').buffer;
   const signed = await lambdaRequest({

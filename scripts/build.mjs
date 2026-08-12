@@ -6,19 +6,11 @@ import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
+import { publicTypeExports, publicValueExports } from "./public-api.mjs";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const outDir = join(rootDir, "dist");
 const tscBin = join(rootDir, "node_modules", "typescript", "bin", "tsc");
-const publicValueExports = ["SigV4Client", "signAwsRequest"].sort();
-const publicTypeExports = [
-  "SigV4ClientOptions",
-  "SigV4RequestInit",
-  "SigV4RequestSigningOptions",
-  "SignAwsRequestOptions",
-  "SigningKeyCache",
-  "SignedAwsRequest",
-];
 const publicDeclarationNames = [...publicValueExports, ...publicTypeExports].sort();
 const moduleTextCache = new Map();
 

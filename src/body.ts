@@ -122,6 +122,9 @@ async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Arr
     return textEncoder.encode(body);
   }
   if (body instanceof ArrayBuffer) {
+    // The outer constructor copies without invoking species or input methods.
+    // It also follows the pinned workerd runtime's faster large-body path than
+    // view.slice().
     return new Uint8Array(new Uint8Array(body));
   }
   if (ArrayBuffer.isView(body)) {
@@ -152,6 +155,9 @@ function snapshotArrayBufferView(body: ArrayBufferView): Uint8Array<ArrayBuffer>
   const buffer = Reflect.get(prototype, "buffer", body) as ArrayBufferLike;
   const byteOffset = Reflect.get(prototype, "byteOffset", body) as number;
   const byteLength = Reflect.get(prototype, "byteLength", body) as number;
+  // Besides avoiding user hooks and the pinned workerd runtime's slower
+  // view.slice() path, the outer constructor normalizes SharedArrayBuffer-backed
+  // views to ArrayBuffer.
   return new Uint8Array(new Uint8Array(buffer, byteOffset, byteLength));
 }
 

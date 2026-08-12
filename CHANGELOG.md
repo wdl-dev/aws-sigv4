@@ -7,25 +7,35 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Documentation
+
+- Corrected the 3.0.2 and 3.0.3 notes to distinguish the 3.0.2 `Uint8Array`
+  copy-strategy regression from the broader view hardening first shipped in
+  3.0.3. Releases before 3.0.3 could snapshot out-of-bounds non-Uint8 typed
+  arrays as empty bodies or allow non-Uint8 typed-array and DataView subclass
+  accessors to substitute different bytes.
+
 ## 3.0.3
 
 ### Fixed
 
-- Restored constructor-based snapshot copying for direct `ArrayBuffer` and
-  `ArrayBufferView` bodies after the 3.0.2 view-and-slice path regressed
-  large-body copy latency; exact view bounds, out-of-bounds rejection, and
-  subclass isolation remain unchanged.
-- All typed-array and DataView bodies now use intrinsic view state, preventing
-  out-of-bounds non-Uint8 typed arrays from becoming empty snapshots and ignoring
-  subclass accessors that could substitute different bytes.
+- Reverted the 3.0.2 `Uint8Array` view-and-slice copy strategy after it regressed
+  large-body latency in workerd, and adopted constructor-based copies for direct
+  `ArrayBuffer` and all `ArrayBufferView` bodies.
+- Fixed typed-array and DataView snapshots to use intrinsic view state. This
+  rejects out-of-bounds non-Uint8 typed arrays instead of signing empty bodies
+  and prevents non-Uint8 typed-array and DataView subclass accessors from
+  substituting different bytes.
 
 ## 3.0.2
 
 ### Changed
 
-- `Uint8Array` body snapshots now copy through an intrinsic base view while
-  preserving exact view bounds, rejecting out-of-bounds views, and ignoring
-  subclass copy hooks and accessors.
+- Changed `Uint8Array` body snapshots from constructor copying to an intrinsic
+  base view followed by `slice()`. This preserved exact bounds and isolated its
+  subclass hooks, but regressed large-body copy latency in workerd. Version
+  3.0.3 restored constructor copying while retaining and extending the intrinsic
+  bounds and subclass isolation.
 
 ## 3.0.1
 

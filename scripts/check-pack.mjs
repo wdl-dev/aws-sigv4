@@ -5,11 +5,13 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { publicTypeExports, publicValueExports } from "./public-api.mjs";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const npmExecPath = process.env.npm_execpath;
 const expectedFiles = ["LICENSE", "NOTICE", "README.md", "dist/index.d.ts", "dist/index.js", "package.json"].sort();
 const outputArgument = process.argv[2];
+const publicImport = [...publicValueExports, ...publicTypeExports.map((name) => `type ${name}`)].join(", ");
 
 if (process.argv.length > 3) {
   throw new TypeError("check-pack.mjs accepts at most one output tarball path");
@@ -85,7 +87,7 @@ function verifyTarballConsumer(directory, tarball) {
   writeFileSync(
     join(consumerDirectory, "consumer.ts"),
     [
-      'import { SigV4Client, type SigV4ClientOptions, type SigningKeyCache } from "@wdl-dev/aws-sigv4";',
+      `import { ${publicImport} } from "@wdl-dev/aws-sigv4";`,
       "",
       "const requestOnlyFetch = async (request: Request): Promise<Response> => new Response(request.url);",
       "const nullMissCache: SigningKeyCache = {",
@@ -98,7 +100,30 @@ function verifyTarballConsumer(directory, tarball) {
       '  service: "s3",',
       '  region: "us-east-1",',
       "};",
-      "new SigV4Client(minimalOptions);",
+      "const client = new SigV4Client(minimalOptions);",
+      "declare const compatibleInit: SigV4RequestInit;",
+      "const nativeInit: RequestInit = compatibleInit;",
+      'void fetch("https://example.com/", compatibleInit);',
+      'void new Request("https://example.com/", compatibleInit);',
+      "void nativeInit;",
+      "class CompatibleClient extends SigV4Client {",
+      "  override async sign(input: Request | string | URL, init?: SigV4RequestInit): Promise<Request> {",
+      "    return super.sign(input, init);",
+      "  }",
+      "  override async fetch(input: Request | string | URL, init?: SigV4RequestInit): Promise<Response> {",
+      "    return super.fetch(input, init);",
+      "  }",
+      "}",
+      "new CompatibleClient(minimalOptions);",
+      "const requestSigningOptions: SigV4RequestSigningOptions = {};",
+      "void requestSigningOptions;",
+      "const signingOptions: SignAwsRequestOptions = {",
+      "  ...minimalOptions,",
+      '  url: "https://s3.us-east-1.amazonaws.com/bucket/key",',
+      '  method: "PUT",',
+      "};",
+      "const signedRequest: Promise<SignedAwsRequest> = signAwsRequest(signingOptions);",
+      "void signedRequest;",
       "const extendedOptions: SigV4ClientOptions = {",
       "  ...minimalOptions,",
       "  cache: nullMissCache,",
@@ -123,6 +148,7 @@ function verifyTarballConsumer(directory, tarball) {
       "--lib",
       "ES2025,DOM,DOM.Iterable",
       "--strict",
+      "--exactOptionalPropertyTypes",
       "--skipLibCheck",
       "false",
       "--noEmit",
