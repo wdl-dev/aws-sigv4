@@ -4,6 +4,8 @@
 import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, UNSIGNED_PAYLOAD, textEncoder } from "./constants.js";
 import { sha256Hex } from "./crypto.js";
 
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
+
 export interface PreparedBody {
   body: BodyInit | null | undefined;
   payloadHash: string;
@@ -118,13 +120,23 @@ async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Arr
   if (typeof body === "string") {
     return textEncoder.encode(body);
   }
-  if (body instanceof Uint8Array) {
-    return new Uint8Array(body);
-  }
   if (body instanceof ArrayBuffer) {
     return new Uint8Array(body).slice();
   }
+  if (body instanceof Uint8Array) {
+    // Resizing can make a fixed-length view out of bounds while its public
+    // offset and length read as zero. Validate the internal view before copying,
+    // then use intrinsic getters so subclass accessors cannot alter the snapshot.
+    void Uint8Array.prototype.at.call(body, 0);
+    const buffer = Reflect.get(typedArrayPrototype, "buffer", body) as ArrayBufferLike;
+    const byteOffset = Reflect.get(typedArrayPrototype, "byteOffset", body) as number;
+    const byteLength = Reflect.get(typedArrayPrototype, "byteLength", body) as number;
+    return new Uint8Array(buffer, byteOffset, byteLength).slice();
+  }
   if (ArrayBuffer.isView(body)) {
+    // Copy through a fresh base view so input-owned slice methods and subclass
+    // species cannot affect the snapshot. Copy performance varies by engine;
+    // this form follows the bulk-copy path in the pinned workerd runtime.
     return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
   }
   if (body instanceof URLSearchParams) {

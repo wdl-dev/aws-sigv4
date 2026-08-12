@@ -604,6 +604,57 @@ test("payload hashing snapshots Uint8Array bodies before asynchronous digest com
   );
 });
 
+test("payload hashing snapshots Uint8Array subclasses without invoking input copy hooks", async () => {
+  class InputBytes extends Uint8Array {
+    static get [Symbol.species]() {
+      throw new Error("input species must not construct the snapshot");
+    }
+
+    slice() {
+      throw new Error("input slice must not construct the snapshot");
+    }
+
+    get buffer() {
+      throw new Error("input buffer getter must not describe the snapshot");
+    }
+
+    get byteOffset() {
+      throw new Error("input byteOffset getter must not describe the snapshot");
+    }
+
+    get byteLength() {
+      throw new Error("input byteLength getter must not describe the snapshot");
+    }
+  }
+
+  const buffer = new ArrayBuffer(8);
+  new Uint8Array(buffer).set([0, 0, 104, 101, 108, 112, 0, 0]);
+  const body = new InputBytes(buffer, 2, 4);
+  const signed = await lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    body,
+  });
+  new Uint8Array(buffer).fill(0);
+  assert.equal(new TextDecoder().decode(signed.body), "help");
+  assert.equal(Object.getPrototypeOf(signed.body), Uint8Array.prototype);
+});
+
+test("payload hashing rejects out-of-bounds Uint8Array bodies", async () => {
+  const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+  const body = new Uint8Array(buffer, 2, 4);
+  buffer.resize(1);
+  await assert.rejects(
+    () =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        body,
+      }),
+    TypeError
+  );
+});
+
 test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () => {
   const body = new TextEncoder().encode('{"ok":true}').buffer;
   const signed = await lambdaRequest({

@@ -7,6 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Changed
+
+- `Uint8Array` body snapshots now use the pinned workerd runtime's faster bulk
+  copy path while preserving exact view bounds, rejecting out-of-bounds views,
+  and ignoring subclass copy hooks and accessors.
+
 ## 3.0.1
 
 ### Fixed

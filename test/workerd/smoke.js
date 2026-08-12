@@ -12,6 +12,7 @@ export default {
     await assertGoldenSignature();
     await assertS3RequestSignature();
     await assertDisturbedStreamRejected();
+    await assertUint8ArraySnapshots();
     await assertClientFetch();
     await assertSourceSignalPropagation();
     await assertFetchIgnoresSignOverride();
@@ -72,6 +73,68 @@ async function assertDisturbedStreamRejected() {
       throw new Error(`${service} disturbed stream error: received ${String(caught)}`);
     }
     assertEqual(body.locked, false, `${service} disturbed stream lock state`);
+  }
+}
+
+async function assertUint8ArraySnapshots() {
+  class InputBytes extends Uint8Array {
+    static get [Symbol.species]() {
+      throw new Error("input species must not construct the snapshot");
+    }
+
+    slice() {
+      throw new Error("input slice must not construct the snapshot");
+    }
+
+    get buffer() {
+      throw new Error("input buffer getter must not describe the snapshot");
+    }
+
+    get byteOffset() {
+      throw new Error("input byteOffset getter must not describe the snapshot");
+    }
+
+    get byteLength() {
+      throw new Error("input byteLength getter must not describe the snapshot");
+    }
+  }
+
+  const source = new ArrayBuffer(8);
+  new Uint8Array(source).set([0, 0, 104, 101, 108, 112, 0, 0]);
+  const signed = await signAwsRequest({
+    accessKeyId: ACCESS_KEY_ID,
+    secretAccessKey: SECRET_ACCESS_KEY,
+    service: "lambda",
+    region: "ap-northeast-1",
+    method: "POST",
+    url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
+    body: new InputBytes(source, 2, 4),
+    signingDate: FIXED_AMZ_DATE,
+  });
+  new Uint8Array(source).fill(0);
+  assertEqual(new TextDecoder().decode(signed.body), "help", "Uint8Array snapshot bytes");
+  assertEqual(Object.getPrototypeOf(signed.body), Uint8Array.prototype, "Uint8Array snapshot prototype");
+
+  const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
+  const outOfBounds = new Uint8Array(resizable, 2, 4);
+  resizable.resize(1);
+  let caught;
+  try {
+    await signAwsRequest({
+      accessKeyId: ACCESS_KEY_ID,
+      secretAccessKey: SECRET_ACCESS_KEY,
+      service: "lambda",
+      region: "ap-northeast-1",
+      method: "POST",
+      url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
+      body: outOfBounds,
+      signingDate: FIXED_AMZ_DATE,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof TypeError)) {
+    throw new Error(`out-of-bounds Uint8Array: received ${String(caught)}`);
   }
 }
 
