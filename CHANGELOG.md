@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 3.0.3
+
 ### Fixed
 
 - Restored constructor-based snapshot copying for direct `ArrayBuffer` and
