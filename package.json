@@ -36,6 +36,7 @@
     "access": "public"
   },
   "scripts": {
+    "bench:body-copy": "workerd test test/workerd/body-copy-benchmark.capnp",
     "build": "node scripts/build.mjs",
     "check:pack": "npm run build && node scripts/check-pack.mjs",
     "format": "prettier --write .",

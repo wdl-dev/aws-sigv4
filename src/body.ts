@@ -5,6 +5,7 @@ import { AMZ_CONTENT_SHA256_HEADER, CONTENT_TYPE_HEADER, UNSIGNED_PAYLOAD, textE
 import { sha256Hex } from "./crypto.js";
 
 const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const dataViewPrototype = DataView.prototype;
 
 export interface PreparedBody {
   body: BodyInit | null | undefined;
@@ -121,23 +122,10 @@ async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Arr
     return textEncoder.encode(body);
   }
   if (body instanceof ArrayBuffer) {
-    return new Uint8Array(body).slice();
-  }
-  if (body instanceof Uint8Array) {
-    // Resizing can make a fixed-length view out of bounds while its public
-    // offset and length read as zero. Validate the internal view before copying,
-    // then use intrinsic getters so subclass accessors cannot alter the snapshot.
-    void Uint8Array.prototype.at.call(body, 0);
-    const buffer = Reflect.get(typedArrayPrototype, "buffer", body) as ArrayBufferLike;
-    const byteOffset = Reflect.get(typedArrayPrototype, "byteOffset", body) as number;
-    const byteLength = Reflect.get(typedArrayPrototype, "byteLength", body) as number;
-    return new Uint8Array(buffer, byteOffset, byteLength).slice();
+    return new Uint8Array(new Uint8Array(body));
   }
   if (ArrayBuffer.isView(body)) {
-    // Copy through a fresh base view so input-owned slice methods and subclass
-    // species cannot affect the snapshot. Copy performance varies by engine;
-    // this form follows the bulk-copy path in the pinned workerd runtime.
-    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
+    return snapshotArrayBufferView(body);
   }
   if (body instanceof URLSearchParams) {
     return textEncoder.encode(body.toString());
@@ -149,6 +137,22 @@ async function bodyBytes(body: BodyInit, signal?: AbortSignal): Promise<Uint8Arr
     return new Uint8Array(await body.arrayBuffer());
   }
   throw new TypeError("body must be a string, Blob, URLSearchParams, ArrayBuffer, or ArrayBufferView");
+}
+
+function snapshotArrayBufferView(body: ArrayBufferView): Uint8Array<ArrayBuffer> {
+  let prototype = typedArrayPrototype;
+  if (body instanceof DataView) {
+    prototype = dataViewPrototype;
+  } else {
+    // Resizing can make a fixed-length typed array out of bounds while its
+    // public offset and length read as zero. This intrinsic is generic across
+    // typed-array element types and validates the internal view first.
+    void Uint8Array.prototype.at.call(body as Uint8Array, 0);
+  }
+  const buffer = Reflect.get(prototype, "buffer", body) as ArrayBufferLike;
+  const byteOffset = Reflect.get(prototype, "byteOffset", body) as number;
+  const byteLength = Reflect.get(prototype, "byteLength", body) as number;
+  return new Uint8Array(new Uint8Array(buffer, byteOffset, byteLength));
 }
 
 function assertReadableStreamUsable(body: ReadableStream): void {

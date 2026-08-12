@@ -12,7 +12,7 @@ export default {
     await assertGoldenSignature();
     await assertS3RequestSignature();
     await assertDisturbedStreamRejected();
-    await assertUint8ArraySnapshots();
+    await assertArrayBufferViewSnapshots();
     await assertClientFetch();
     await assertSourceSignalPropagation();
     await assertFetchIgnoresSignOverride();
@@ -76,8 +76,57 @@ async function assertDisturbedStreamRejected() {
   }
 }
 
-async function assertUint8ArraySnapshots() {
-  class InputBytes extends Uint8Array {
+async function assertArrayBufferViewSnapshots() {
+  const InputBytes = hostileTypedArraySubclass(Uint8Array);
+  const InputWords = hostileTypedArraySubclass(Uint16Array);
+  class InputView extends DataView {
+    get buffer() {
+      throw new Error("input buffer getter must not describe the snapshot");
+    }
+
+    get byteOffset() {
+      throw new Error("input byteOffset getter must not describe the snapshot");
+    }
+
+    get byteLength() {
+      throw new Error("input byteLength getter must not describe the snapshot");
+    }
+  }
+
+  const source = new ArrayBuffer(8);
+  new Uint8Array(source).set([0, 0, 104, 101, 108, 112, 0, 0]);
+  const pendingBodies = Promise.all(
+    [new InputBytes(source, 2, 4), new InputWords(source, 2, 2), new InputView(source, 2, 4)].map(signLambdaBody)
+  );
+  new Uint8Array(source).fill(0);
+  const signedBodies = await pendingBodies;
+  for (const signed of signedBodies) {
+    assertEqual(new TextDecoder().decode(signed.body), "help", "typed-array snapshot bytes");
+    assertEqual(Object.getPrototypeOf(signed.body), Uint8Array.prototype, "typed-array snapshot prototype");
+  }
+
+  for (const createBody of [
+    (buffer) => new Uint8Array(buffer, 2, 4),
+    (buffer) => new Uint16Array(buffer, 2, 2),
+    (buffer) => new DataView(buffer, 2, 4),
+  ]) {
+    const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
+    const outOfBounds = createBody(resizable);
+    resizable.resize(1);
+    let caught;
+    try {
+      await signLambdaBody(outOfBounds);
+    } catch (error) {
+      caught = error;
+    }
+    if (!(caught instanceof TypeError)) {
+      throw new Error(`out-of-bounds typed array: received ${String(caught)}`);
+    }
+  }
+}
+
+function hostileTypedArraySubclass(Base) {
+  return class extends Base {
     static get [Symbol.species]() {
       throw new Error("input species must not construct the snapshot");
     }
@@ -97,45 +146,20 @@ async function assertUint8ArraySnapshots() {
     get byteLength() {
       throw new Error("input byteLength getter must not describe the snapshot");
     }
-  }
+  };
+}
 
-  const source = new ArrayBuffer(8);
-  new Uint8Array(source).set([0, 0, 104, 101, 108, 112, 0, 0]);
-  const signed = await signAwsRequest({
+function signLambdaBody(body) {
+  return signAwsRequest({
     accessKeyId: ACCESS_KEY_ID,
     secretAccessKey: SECRET_ACCESS_KEY,
     service: "lambda",
     region: "ap-northeast-1",
     method: "POST",
     url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
-    body: new InputBytes(source, 2, 4),
+    body,
     signingDate: FIXED_AMZ_DATE,
   });
-  new Uint8Array(source).fill(0);
-  assertEqual(new TextDecoder().decode(signed.body), "help", "Uint8Array snapshot bytes");
-  assertEqual(Object.getPrototypeOf(signed.body), Uint8Array.prototype, "Uint8Array snapshot prototype");
-
-  const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
-  const outOfBounds = new Uint8Array(resizable, 2, 4);
-  resizable.resize(1);
-  let caught;
-  try {
-    await signAwsRequest({
-      accessKeyId: ACCESS_KEY_ID,
-      secretAccessKey: SECRET_ACCESS_KEY,
-      service: "lambda",
-      region: "ap-northeast-1",
-      method: "POST",
-      url: "https://lambda.ap-northeast-1.amazonaws.com/2025-09-09/microvms",
-      body: outOfBounds,
-      signingDate: FIXED_AMZ_DATE,
-    });
-  } catch (error) {
-    caught = error;
-  }
-  if (!(caught instanceof TypeError)) {
-    throw new Error(`out-of-bounds Uint8Array: received ${String(caught)}`);
-  }
 }
 
 async function assertGoldenSignature() {

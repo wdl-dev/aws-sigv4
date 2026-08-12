@@ -7,13 +7,23 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Fixed
+
+- Restored constructor-based snapshot copying for direct `ArrayBuffer` and
+  `ArrayBufferView` bodies after the 3.0.2 view-and-slice path regressed
+  large-body copy latency; exact view bounds, out-of-bounds rejection, and
+  subclass isolation remain unchanged.
+- All typed-array and DataView bodies now use intrinsic view state, preventing
+  out-of-bounds non-Uint8 typed arrays from becoming empty snapshots and ignoring
+  subclass accessors that could substitute different bytes.
+
 ## 3.0.2
 
 ### Changed
 
-- `Uint8Array` body snapshots now use the pinned workerd runtime's faster bulk
-  copy path while preserving exact view bounds, rejecting out-of-bounds views,
-  and ignoring subclass copy hooks and accessors.
+- `Uint8Array` body snapshots now copy through an intrinsic base view while
+  preserving exact view bounds, rejecting out-of-bounds views, and ignoring
+  subclass copy hooks and accessors.
 
 ## 3.0.1
 

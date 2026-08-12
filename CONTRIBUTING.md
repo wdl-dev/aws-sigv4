@@ -34,6 +34,11 @@ npm pack --dry-run
 git diff --cached --check
 ```
 
+For manual comparisons of large binary-body snapshot strategies on the pinned
+workerd runtime, run `npm run bench:body-copy`. The benchmark uses batched
+measurements to reduce timer quantization and reports results without enforcing
+a machine-dependent performance threshold.
+
 ## Releases
 
 Releases are tag-driven and cut by maintainers. Pushing `v<package-version>`

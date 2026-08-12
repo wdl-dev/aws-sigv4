@@ -604,8 +604,32 @@ test("payload hashing snapshots Uint8Array bodies before asynchronous digest com
   );
 });
 
-test("payload hashing snapshots Uint8Array subclasses without invoking input copy hooks", async () => {
-  class InputBytes extends Uint8Array {
+test("payload hashing snapshots typed-array subclasses without invoking input copy hooks", async () => {
+  const InputBytes = hostileTypedArraySubclass(Uint8Array);
+  const InputWords = hostileTypedArraySubclass(Uint16Array);
+
+  const buffer = new ArrayBuffer(8);
+  new Uint8Array(buffer).set([0, 0, 104, 101, 108, 112, 0, 0]);
+  const bodies = [new InputBytes(buffer, 2, 4), new InputWords(buffer, 2, 2)];
+  const pendingBodies = Promise.all(
+    bodies.map((body) =>
+      lambdaRequest({
+        method: "POST",
+        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+        body,
+      })
+    )
+  );
+  new Uint8Array(buffer).fill(0);
+  const signedBodies = await pendingBodies;
+  for (const signed of signedBodies) {
+    assert.equal(new TextDecoder().decode(signed.body), "help");
+    assert.equal(Object.getPrototypeOf(signed.body), Uint8Array.prototype);
+  }
+});
+
+function hostileTypedArraySubclass(Base) {
+  return class extends Base {
     static get [Symbol.species]() {
       throw new Error("input species must not construct the snapshot");
     }
@@ -625,34 +649,28 @@ test("payload hashing snapshots Uint8Array subclasses without invoking input cop
     get byteLength() {
       throw new Error("input byteLength getter must not describe the snapshot");
     }
+  };
+}
+
+test("payload hashing rejects out-of-bounds ArrayBufferView bodies", async () => {
+  for (const createBody of [
+    (buffer) => new Uint8Array(buffer, 2, 4),
+    (buffer) => new Uint16Array(buffer, 2, 2),
+    (buffer) => new DataView(buffer, 2, 4),
+  ]) {
+    const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+    const body = createBody(buffer);
+    buffer.resize(1);
+    await assert.rejects(
+      () =>
+        lambdaRequest({
+          method: "POST",
+          url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+          body,
+        }),
+      TypeError
+    );
   }
-
-  const buffer = new ArrayBuffer(8);
-  new Uint8Array(buffer).set([0, 0, 104, 101, 108, 112, 0, 0]);
-  const body = new InputBytes(buffer, 2, 4);
-  const signed = await lambdaRequest({
-    method: "POST",
-    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    body,
-  });
-  new Uint8Array(buffer).fill(0);
-  assert.equal(new TextDecoder().decode(signed.body), "help");
-  assert.equal(Object.getPrototypeOf(signed.body), Uint8Array.prototype);
-});
-
-test("payload hashing rejects out-of-bounds Uint8Array bodies", async () => {
-  const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
-  const body = new Uint8Array(buffer, 2, 4);
-  buffer.resize(1);
-  await assert.rejects(
-    () =>
-      lambdaRequest({
-        method: "POST",
-        url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-        body,
-      }),
-    TypeError
-  );
 });
 
 test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () => {
@@ -674,17 +692,47 @@ test("payload hashing materializes ArrayBuffer bodies as Uint8Array", async () =
 });
 
 test("payload hashing snapshots ArrayBufferView bodies", async () => {
+  class InputView extends DataView {
+    get buffer() {
+      throw new Error("input buffer getter must not describe the snapshot");
+    }
+
+    get byteOffset() {
+      throw new Error("input byteOffset getter must not describe the snapshot");
+    }
+
+    get byteLength() {
+      throw new Error("input byteLength getter must not describe the snapshot");
+    }
+  }
+
   const buffer = new ArrayBuffer(8);
-  const body = new DataView(buffer, 2, 4);
+  const body = new InputView(buffer, 2, 4);
   new Uint8Array(buffer).set([0, 0, 104, 101, 108, 112, 0, 0]);
-  const signed = await lambdaRequest({
+  const pending = lambdaRequest({
     method: "POST",
     url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
     body,
   });
   new Uint8Array(buffer).fill(0);
+  const signed = await pending;
   assert.equal(new TextDecoder().decode(signed.body), "help");
   assert.notEqual(signed.body.buffer, buffer);
+});
+
+test("payload hashing snapshots SharedArrayBuffer-backed views", async () => {
+  const buffer = new SharedArrayBuffer(8);
+  const body = new Uint16Array(buffer, 2, 2);
+  new Uint8Array(buffer).set([0, 0, 104, 101, 108, 112, 0, 0]);
+  const pending = lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    body,
+  });
+  new Uint8Array(buffer).fill(0);
+  const signed = await pending;
+  assert.equal(new TextDecoder().decode(signed.body), "help");
+  assert.ok(signed.body.buffer instanceof ArrayBuffer);
 });
 
 test("signed S3 payloads send x-amz-content-sha256", async () => {
