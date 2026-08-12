@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 3.0.2
+
 ### Changed
 
 - `Uint8Array` body snapshots now use the pinned workerd runtime's faster bulk
