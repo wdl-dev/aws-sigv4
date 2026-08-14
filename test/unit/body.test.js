@@ -338,6 +338,21 @@ test("signAwsRequest rejects pre-aborted body materialization without reading th
   assert.equal(body.locked, false);
 });
 
+test("payload hashing observes immediate aborts before hashing an empty body", async (t) => {
+  const digest = t.mock.method(crypto.subtle, "digest");
+  const controller = new AbortController();
+  const reason = { code: "bodyless-immediate-abort" };
+  const pending = lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    signal: controller.signal,
+  });
+  controller.abort(reason);
+
+  await assert.rejects(pending, (error) => error === reason);
+  assert.equal(digest.mock.callCount(), 0);
+});
+
 test("signAwsRequest aborts stream materialization with the exact reason", { timeout: 2_000 }, async () => {
   let readStartedResolve;
   const readStarted = new Promise((resolve) => {
@@ -571,30 +586,25 @@ test("S3 unsigned FormData signs the generated boundary", async () => {
   assert.match(await signed.clone().text(), new RegExp(boundary));
 });
 
-test("payload hashing snapshots Uint8Array bodies before asynchronous digest completion", async () => {
+test("payload hashing snapshots Uint8Array bodies before asynchronous digest completion", async (t) => {
   const body = new Uint8Array([123, 34, 111, 107, 34, 58, 116, 114, 117, 101, 125]);
   const expectedBody = new Uint8Array(body);
   const digestInputs = [];
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
-  crypto.subtle.digest = async (algorithm, data) => {
+  t.mock.method(crypto.subtle, "digest", async (algorithm, data) => {
     digestInputs.push(data);
     const digest = await originalDigest(algorithm, data);
     body.fill(66);
     return digest;
-  };
-  let signed;
-  try {
-    signed = await lambdaRequest({
-      method: "POST",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-      headers: {
-        "content-type": "application/json",
-      },
-      body,
-    });
-  } finally {
-    crypto.subtle.digest = originalDigest;
-  }
+  });
+  const signed = await lambdaRequest({
+    method: "POST",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+    headers: {
+      "content-type": "application/json",
+    },
+    body,
+  });
   assert.equal(digestInputs.includes(body), false);
   assert.notEqual(signed.body, body);
   assert.deepEqual(signed.body, expectedBody);

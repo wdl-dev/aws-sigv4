@@ -605,124 +605,96 @@ test("SigV4Client.fetch replays unsigned Blob bodies with their content-type sig
   assert.deepEqual(bodies, ["stable", "stable"]);
 });
 
-test("SigV4Client.fetch caps exponential retry delay", async () => {
-  const originalRandom = Math.random;
-  const originalSetTimeout = globalThis.setTimeout;
+test("SigV4Client.fetch caps exponential retry delay", async (t) => {
   const delays = [];
-  try {
-    Math.random = () => 1;
-    globalThis.setTimeout = (callback, delay) => {
-      delays.push(delay);
-      callback();
-      return 0;
-    };
-    const client = lambdaClient({
-      retries: 2,
-      initialRetryDelayMs: 50,
-      maxRetryDelayMs: 7,
-      fetch: async () => new Response("retry", { status: 500 }),
-    });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 500);
-    assert.deepEqual(delays, [7, 7]);
-  } finally {
-    Math.random = originalRandom;
-    globalThis.setTimeout = originalSetTimeout;
-  }
+  t.mock.method(Math, "random", () => 1);
+  t.mock.method(globalThis, "setTimeout", (callback, delay) => {
+    delays.push(delay);
+    callback();
+    return 0;
+  });
+  const client = lambdaClient({
+    retries: 2,
+    initialRetryDelayMs: 50,
+    maxRetryDelayMs: 7,
+    fetch: async () => new Response("retry", { status: 500 }),
+  });
+  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(delays, [7, 7]);
 });
 
-test("SigV4Client.fetch applies full jitter to exponential retry delays", async () => {
-  const originalRandom = Math.random;
-  const originalSetTimeout = globalThis.setTimeout;
+test("SigV4Client.fetch applies full jitter to exponential retry delays", async (t) => {
   const delays = [];
-  try {
-    Math.random = () => 0.25;
-    globalThis.setTimeout = (callback, delay) => {
-      delays.push(delay);
-      callback();
-      return 0;
-    };
-    const client = lambdaClient({
-      retries: 3,
-      initialRetryDelayMs: 40,
-      maxRetryDelayMs: 1_000,
-      fetch: async () => new Response("retry", { status: 500 }),
-    });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 500);
-    assert.deepEqual(delays, [10, 20, 40]);
-  } finally {
-    Math.random = originalRandom;
-    globalThis.setTimeout = originalSetTimeout;
-  }
+  t.mock.method(Math, "random", () => 0.25);
+  t.mock.method(globalThis, "setTimeout", (callback, delay) => {
+    delays.push(delay);
+    callback();
+    return 0;
+  });
+  const client = lambdaClient({
+    retries: 3,
+    initialRetryDelayMs: 40,
+    maxRetryDelayMs: 1_000,
+    fetch: async () => new Response("retry", { status: 500 }),
+  });
+  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(delays, [10, 20, 40]);
 });
 
-test("SigV4Client.fetch applies full jitter after transient fetch rejections", async () => {
-  const originalRandom = Math.random;
-  const originalSetTimeout = globalThis.setTimeout;
+test("SigV4Client.fetch applies full jitter after transient fetch rejections", async (t) => {
   const delays = [];
   let calls = 0;
-  try {
-    Math.random = () => 0.25;
-    globalThis.setTimeout = (callback, delay) => {
-      delays.push(delay);
-      callback();
-      return 0;
-    };
-    const client = lambdaClient({
-      retries: 3,
-      initialRetryDelayMs: 40,
-      maxRetryDelayMs: 1_000,
-      fetch: async () => {
-        calls += 1;
-        throw new TypeError("socket reset");
-      },
-    });
-    await assert.rejects(
-      () =>
-        client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-          signing: { signingDate: FIXED_AMZ_DATE },
-        }),
-      /socket reset/
-    );
-    assert.equal(calls, 4);
-    assert.deepEqual(delays, [10, 20, 40]);
-  } finally {
-    Math.random = originalRandom;
-    globalThis.setTimeout = originalSetTimeout;
-  }
+  t.mock.method(Math, "random", () => 0.25);
+  t.mock.method(globalThis, "setTimeout", (callback, delay) => {
+    delays.push(delay);
+    callback();
+    return 0;
+  });
+  const client = lambdaClient({
+    retries: 3,
+    initialRetryDelayMs: 40,
+    maxRetryDelayMs: 1_000,
+    fetch: async () => {
+      calls += 1;
+      throw new TypeError("socket reset");
+    },
+  });
+  await assert.rejects(
+    () =>
+      client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /socket reset/
+  );
+  assert.equal(calls, 4);
+  assert.deepEqual(delays, [10, 20, 40]);
 });
 
-test("SigV4Client.fetch clamps retry delays to the platform timeout limit", async () => {
-  const originalRandom = Math.random;
-  const originalSetTimeout = globalThis.setTimeout;
+test("SigV4Client.fetch clamps retry delays to the platform timeout limit", async (t) => {
   const delays = [];
-  try {
-    Math.random = () => 1;
-    globalThis.setTimeout = (callback, delay) => {
-      delays.push(delay);
-      callback();
-      return 0;
-    };
-    const client = lambdaClient({
-      retries: 1,
-      initialRetryDelayMs: Number.MAX_SAFE_INTEGER,
-      maxRetryDelayMs: Number.MAX_SAFE_INTEGER,
-      fetch: async () => new Response("retry", { status: 500 }),
-    });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 500);
-    assert.deepEqual(delays, [2_147_483_647]);
-  } finally {
-    Math.random = originalRandom;
-    globalThis.setTimeout = originalSetTimeout;
-  }
+  t.mock.method(Math, "random", () => 1);
+  t.mock.method(globalThis, "setTimeout", (callback, delay) => {
+    delays.push(delay);
+    callback();
+    return 0;
+  });
+  const client = lambdaClient({
+    retries: 1,
+    initialRetryDelayMs: Number.MAX_SAFE_INTEGER,
+    maxRetryDelayMs: Number.MAX_SAFE_INTEGER,
+    fetch: async () => new Response("retry", { status: 500 }),
+  });
+  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(delays, [2_147_483_647]);
 });
 
 test("SigV4Client rejects negative retries", () => {

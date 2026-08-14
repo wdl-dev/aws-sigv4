@@ -7,6 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Fixed
+
+- Cancellation arriving immediately after synchronous or empty-body preparation
+  is now observed before payload hashing starts.
+
 ### Documentation
 
 - Corrected the 3.0.2 and 3.0.3 notes to distinguish the 3.0.2 `Uint8Array`

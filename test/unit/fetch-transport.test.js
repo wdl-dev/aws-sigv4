@@ -7,38 +7,28 @@ import { test } from "node:test";
 import { SigV4Client } from "../../dist/index.js";
 import { ACCESS_KEY_ID, FIXED_AMZ_DATE, LAMBDA_ENDPOINT, SECRET_ACCESS_KEY, lambdaClient } from "./helpers.js";
 
-test("SigV4Client.fetch binds the default global fetch", async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    globalThis.fetch = function fetchWithGlobalThisCheck() {
-      assert.equal(this, globalThis);
-      return Promise.resolve(new Response("ok"));
-    };
-    const client = lambdaClient({ retries: 0 });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 200);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("SigV4Client.fetch binds the default global fetch", async (t) => {
+  t.mock.method(globalThis, "fetch", function fetchWithGlobalThisCheck() {
+    assert.equal(this, globalThis);
+    return Promise.resolve(new Response("ok"));
+  });
+  const client = lambdaClient({ retries: 0 });
+  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
 });
 
-test("SigV4Client.fetch binds custom global fetch functions", async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    globalThis.fetch = function fetchWithGlobalThisCheck() {
-      assert.equal(this, globalThis);
-      return Promise.resolve(new Response("ok"));
-    };
-    const client = lambdaClient({ fetch: globalThis.fetch });
-    const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(response.status, 200);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("SigV4Client.fetch binds custom global fetch functions", async (t) => {
+  t.mock.method(globalThis, "fetch", function fetchWithGlobalThisCheck() {
+    assert.equal(this, globalThis);
+    return Promise.resolve(new Response("ok"));
+  });
+  const client = lambdaClient({ fetch: globalThis.fetch });
+  const response = await client.fetch(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(response.status, 200);
 });
 
 test("SigV4Client.fetch does not bind unrelated custom fetch functions", async () => {

@@ -73,64 +73,56 @@ test("external signing key caches may return null for missing entries", async ()
   assert.equal(entries.size, 1);
 });
 
-test("signAwsRequest skips the secret hash when no signing-key cache is used", async () => {
+test("signAwsRequest skips the secret hash when no signing-key cache is used", async (t) => {
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   let secretDigestCalls = 0;
-  try {
-    crypto.subtle.digest = (algorithm, data) => {
-      if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
-        secretDigestCalls += 1;
-      }
-      return originalDigest(algorithm, data);
-    };
-    await lambdaRequest({
-      method: "GET",
-      url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
-    });
-    assert.equal(secretDigestCalls, 0);
-  } finally {
-    crypto.subtle.digest = originalDigest;
-  }
+  t.mock.method(crypto.subtle, "digest", (algorithm, data) => {
+    if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
+      secretDigestCalls += 1;
+    }
+    return originalDigest(algorithm, data);
+  });
+  await lambdaRequest({
+    method: "GET",
+    url: `${LAMBDA_ENDPOINT}/2025-09-09/microvms`,
+  });
+  assert.equal(secretDigestCalls, 0);
 });
 
-test("SigV4Client does not cache rejected secret hash promises", async () => {
+test("SigV4Client does not cache rejected secret hash promises", async (t) => {
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   let secretDigestCalls = 0;
   const client = lambdaClient();
-  try {
-    crypto.subtle.digest = (algorithm, data) => {
-      if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
-        secretDigestCalls += 1;
-        if (secretDigestCalls === 1) {
-          return Promise.reject(new Error("secret digest unavailable"));
-        }
+  t.mock.method(crypto.subtle, "digest", (algorithm, data) => {
+    if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
+      secretDigestCalls += 1;
+      if (secretDigestCalls === 1) {
+        return Promise.reject(new Error("secret digest unavailable"));
       }
-      return originalDigest(algorithm, data);
-    };
-    await assert.rejects(
-      () =>
-        client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-          signing: { signingDate: FIXED_AMZ_DATE },
-        }),
-      /secret digest unavailable/
-    );
-    const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(
-      signed.headers.get("authorization"),
-      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=2d7bf3729352388cc6717c97bbd11201eb3cd082231c420ac07bfa318cfb2482"
-    );
-    await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.equal(secretDigestCalls, 2);
-  } finally {
-    crypto.subtle.digest = originalDigest;
-  }
+    }
+    return originalDigest(algorithm, data);
+  });
+  await assert.rejects(
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /secret digest unavailable/
+  );
+  const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(
+    signed.headers.get("authorization"),
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260616/ap-northeast-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=2d7bf3729352388cc6717c97bbd11201eb3cd082231c420ac07bfa318cfb2482"
+  );
+  await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.equal(secretDigestCalls, 2);
 });
 
-test("SigV4Client shares in-flight secret hash promises", async () => {
+test("SigV4Client shares in-flight secret hash promises", async (t) => {
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   const client = lambdaClient();
   let releaseSecretDigest;
@@ -148,32 +140,28 @@ test("SigV4Client shares in-flight secret hash promises", async () => {
       }
     };
   });
-  try {
-    crypto.subtle.digest = (algorithm, data) => {
-      if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
-        secretDigestCalls += 1;
-        secretDigestStartedResolve();
-        return secretDigestPromise;
-      }
-      return originalDigest(algorithm, data);
-    };
+  t.mock.method(crypto.subtle, "digest", (algorithm, data) => {
+    if (bufferSourceText(data) === SECRET_ACCESS_KEY) {
+      secretDigestCalls += 1;
+      secretDigestStartedResolve();
+      return secretDigestPromise;
+    }
+    return originalDigest(algorithm, data);
+  });
 
-    const first = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    const second = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    await secretDigestStarted;
-    assert.equal(secretDigestCalls, 1);
-    await releaseSecretDigest();
+  const first = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  const second = client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  await secretDigestStarted;
+  assert.equal(secretDigestCalls, 1);
+  await releaseSecretDigest();
 
-    const [firstSigned, secondSigned] = await Promise.all([first, second]);
-    assert.equal(secretDigestCalls, 1);
-    assert.equal(firstSigned.headers.get("authorization"), secondSigned.headers.get("authorization"));
-  } finally {
-    crypto.subtle.digest = originalDigest;
-  }
+  const [firstSigned, secondSigned] = await Promise.all([first, second]);
+  assert.equal(secretDigestCalls, 1);
+  assert.equal(firstSigned.headers.get("authorization"), secondSigned.headers.get("authorization"));
 });
 
 test("SigV4Client shares in-flight signing-key derivation for one credential scope", async () => {
@@ -203,35 +191,31 @@ test("SigV4Client shares in-flight signing-key derivation for one credential sco
   );
 });
 
-test("SigV4Client does not retain rejected in-flight signing-key derivations", async () => {
+test("SigV4Client does not retain rejected in-flight signing-key derivations", async (t) => {
   const originalSign = crypto.subtle.sign.bind(crypto.subtle);
   const cache = new Map();
   const client = lambdaClient({ cache });
   let hmacCalls = 0;
-  try {
-    crypto.subtle.sign = (...args) => {
-      hmacCalls += 1;
-      if (hmacCalls === 1) {
-        return Promise.reject(new Error("HMAC unavailable"));
-      }
-      return originalSign(...args);
-    };
-    await assert.rejects(
-      () =>
-        client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-          signing: { signingDate: FIXED_AMZ_DATE },
-        }),
-      /HMAC unavailable/
-    );
-    assert.equal(cache.size, 0);
-    const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
-      signing: { signingDate: FIXED_AMZ_DATE },
-    });
-    assert.match(signed.headers.get("authorization") || "", /^AWS4-HMAC-SHA256 /u);
-    assert.equal(cache.size, 1);
-  } finally {
-    crypto.subtle.sign = originalSign;
-  }
+  t.mock.method(crypto.subtle, "sign", (...args) => {
+    hmacCalls += 1;
+    if (hmacCalls === 1) {
+      return Promise.reject(new Error("HMAC unavailable"));
+    }
+    return originalSign(...args);
+  });
+  await assert.rejects(
+    () =>
+      client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+        signing: { signingDate: FIXED_AMZ_DATE },
+      }),
+    /HMAC unavailable/
+  );
+  assert.equal(cache.size, 0);
+  const signed = await client.sign(`${LAMBDA_ENDPOINT}/2025-09-09/microvms`, {
+    signing: { signingDate: FIXED_AMZ_DATE },
+  });
+  assert.match(signed.headers.get("authorization") || "", /^AWS4-HMAC-SHA256 /u);
+  assert.equal(cache.size, 1);
 });
 
 test("signing rejects invalid signing key caches", async () => {
@@ -257,16 +241,11 @@ test("signing rejects invalid signing key caches", async () => {
   );
 });
 
-test("SigV4Client computes the secret hash lazily", () => {
-  const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
-  try {
-    crypto.subtle.digest = () => {
-      throw new Error("digest should not run during construction");
-    };
-    assert.doesNotThrow(() => lambdaClient());
-  } finally {
-    crypto.subtle.digest = originalDigest;
-  }
+test("SigV4Client computes the secret hash lazily", (t) => {
+  t.mock.method(crypto.subtle, "digest", () => {
+    throw new Error("digest should not run during construction");
+  });
+  assert.doesNotThrow(() => lambdaClient());
 });
 
 function bufferSourceText(data) {

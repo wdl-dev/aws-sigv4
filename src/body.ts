@@ -36,6 +36,7 @@ export async function prepareSigningBody(
   const computePayloadHash = !headers.has(AMZ_CONTENT_SHA256_HEADER);
   const materialize = (options.replay && shouldMaterializeBodyForReplay(body)) || (computePayloadHash && hasBody);
   const prepared = await prepareBody(body, headers, materialize, options.signal);
+  options.signal?.throwIfAborted();
   let payloadHash = headers.get(AMZ_CONTENT_SHA256_HEADER);
   if (payloadHash === null) {
     if (prepared.bytes === undefined) {
