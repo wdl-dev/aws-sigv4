@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## 3.0.4
+
 ### Fixed
 
 - Cancellation arriving immediately after synchronous or empty-body preparation
